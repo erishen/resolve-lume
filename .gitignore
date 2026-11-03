@@ -12,3 +12,5 @@ lume-core/bin/
 
 # 运行时会话等
 .data/sessions/
+.data/build.log
+.data/buildx/

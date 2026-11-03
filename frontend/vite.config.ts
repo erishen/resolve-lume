@@ -1,14 +1,21 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// 本地 dev 时把 /react 反代到 agent-httpd（默认 8080）。
-// 生产由 nginx 反代（见 nginx.conf），此处仅为 dev 体验。
+// The agent runtime's HTTP bridge (web-server plugin) listens on 8787.
+// In dev we proxy /api to it so the browser can call it without CORS.
 export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    host: '127.0.0.1',
     proxy: {
-      '/react': { target: 'http://localhost:8080', changeOrigin: true },
+      '/api': {
+        target: 'http://127.0.0.1:8787',
+        changeOrigin: true,
+      },
     },
+  },
+  build: {
+    outDir: 'dist',
   },
 })

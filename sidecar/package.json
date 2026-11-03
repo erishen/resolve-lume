@@ -1,0 +1,11 @@
+{
+  "name": "resolve-lume-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "API gateway + feature backend for resolve-lume (fills the /api/* surface lume agent-httpd does not provide; proxies chat/pse/tools to agent-httpd with SSE format translation).",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

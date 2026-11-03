@@ -22,6 +22,9 @@ services:
       LLM_API_KEY: "${LLM_API_KEY:-}"
       LLM_MODEL: "${LLM_MODEL:-gpt-4o-mini}"
       LLM_SYSTEM_EXTRA: "${LLM_SYSTEM_EXTRA:-}"
+    # 容器内 127.0.0.1 指向容器自身；宿主 LLM 网关跑在 19070，需经 host.docker.internal 访问
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # 源码态热改 souls / tools / mcp 配置无需重建镜像
       - ./souls:/app/souls:ro
@@ -31,13 +34,38 @@ services:
       - "8080"
     restart: unless-stopped
 
+  sidecar:
+    build:
+      context: ./sidecar
+      dockerfile: Dockerfile
+    image: resolve-lume-sidecar:latest
+    environment:
+      PORT: "3000"
+      AGENT_HTTPD_URL: "http://backend:8080"
+      PSE_SOULS_DIR: "/app/souls"
+      FS_ROOTS: "/app/souls,/app/lume-tools"
+      WORKSPACE_DIR: "${WORKSPACE_DIR:-}"
+      LLM_MODEL: "${LLM_MODEL:-gpt-4o-mini}"
+    volumes:
+      - ./souls:/app/souls:ro
+      - ./lume-tools:/app/lume-tools:ro
+      - sidecar-data:/app/.data
+    expose:
+      - "3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     image: resolve-lume-frontend:latest
     ports:
-      - "127.0.0.1:18080:80"
+      - "127.0.0.1:18085:80"
     depends_on:
-      - backend
+      - sidecar
     restart: unless-stopped
+
+volumes:
+  sidecar-data:

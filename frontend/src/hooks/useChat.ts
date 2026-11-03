@@ -1,0 +1,520 @@
+import { useCallback, useRef, useState } from 'react'
+import { approveCall, matchTask, streamChat, streamToolRun } from '../api'
+import type { ChatEvent, ToolSchema, UIMessage } from '../types'
+
+function uid(): string {
+  return Math.random().toString(36).slice(2, 10)
+}
+
+export interface UseChatOptions {
+  tools: ToolSchema[]
+  model: string
+  sessionId: string | null
+  systemPrompt?: string
+  /** Called after a run finishes (success or error) so the caller can persist
+   *  the conversation / create a session id. */
+  onRunComplete?: (messages: UIMessage[]) => void
+}
+
+/**
+ * Chat hook — owns the conversation state and the send/stop/approval flow.
+ *
+ * Extracted from App.tsx. Handles streaming SSE events, tool-call state
+ * tracking, usage accumulation, and the abort controller for the Stop button.
+ * Session persistence is delegated to the caller via `onRunComplete`.
+ */
+export function useChat({ tools, model, sessionId, systemPrompt, onRunComplete }: UseChatOptions) {
+  const [messages, setMessages] = useState<UIMessage[]>([])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [usage, setUsage] = useState({ prompt: 0, completion: 0, cost: 0 })
+  // Auto-matched task (from intent matching) — display only.
+  const [activeTask, setActiveTask] = useState<{ id: string; name: string } | null>(null)
+  // Manually selected task mode (from the Task tab / session restore). `null`
+  // (or 'auto') means "intent-match automatically" on the server.
+  const [taskId, setTaskIdState] = useState<string | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  const messagesRef = useRef(messages)
+  messagesRef.current = messages
+  // Keep latest values in refs so `send` doesn't need them in its dep array
+  // (re-creating `send` on every sessionId change would break the composer's
+  // onSend reference and cause unnecessary re-renders).
+  const sessionIdRef = useRef(sessionId)
+  sessionIdRef.current = sessionId
+  const systemPromptRef = useRef(systemPrompt)
+  systemPromptRef.current = systemPrompt
+  const taskIdRef = useRef(taskId)
+  taskIdRef.current = taskId
+  const onCompleteRef = useRef(onRunComplete)
+  onCompleteRef.current = onRunComplete
+
+  const patchToolState = useCallback(
+    (callId: string, patch: Partial<NonNullable<UIMessage['toolCalls']>[number]>) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.toolCalls
+            ? {
+                ...m,
+                toolCalls: m.toolCalls.map((tc) => (tc.id === callId ? { ...tc, ...patch } : tc)),
+              }
+            : m,
+        ),
+      )
+    },
+    [],
+  )
+
+  const handleDecision = useCallback(
+    async (callId: string, decision: 'approve' | 'reject') => {
+      const ok = await approveCall(callId, decision)
+      if (!ok) return
+      // Mark locally; the backend will emit tool-result next (approve) or feed
+      // the rejection back (reject).
+      patchToolState(callId, { awaitingApproval: false, decision })
+    },
+    [patchToolState],
+  )
+
+  const send = useCallback(
+    async (text: string) => {
+      if (!text.trim() || busy) return
+      setError(null)
+      setBusy(true)
+
+      // 回传历史必须保留工具调用与结果：只回传 role+content 会让上一轮
+      // pse-review 的报告全文与产物绝对路径在追问轮消失，模型只能凭上一轮
+      // 回答的记忆作答（数字类追问必错、也无法用 read-file 找回全文）。
+      // assistant 的 toolCalls 原样随行，结果展开为 tool 角色消息（OpenAI 配对形态）。
+      const history: {
+        role: string
+        content: string
+        toolCalls?: { id: string; name: string; arguments: string | Record<string, unknown> }[]
+        tool_call_id?: string
+        name?: string
+      }[] = []
+      for (const m of messagesRef.current) {
+        const withResult = (m.toolCalls ?? []).filter((tc) => typeof tc.result === 'string')
+        if (m.role === 'assistant' && withResult.length) {
+          history.push({
+            role: 'assistant',
+            content: m.content,
+            toolCalls: withResult.map((tc) => ({
+              id: tc.id ?? `tc_${history.length}`,
+              name: tc.name,
+              arguments: tc.arguments,
+            })),
+          })
+          for (const tc of withResult) {
+            history.push({
+              role: 'tool',
+              tool_call_id: tc.id ?? `tc_${history.length}`,
+              name: tc.name,
+              content: tc.result ?? '',
+            })
+          }
+        } else {
+          history.push({ role: m.role, content: m.content })
+        }
+      }
+      history.push({ role: 'user', content: text })
+
+      const userMsg: UIMessage = { id: uid(), role: 'user', content: text }
+      const assistantId = uid()
+      const assistantMsg: UIMessage = {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        toolCalls: [],
+        pending: true,
+      }
+      setMessages((prev) => [...prev, userMsg, assistantMsg])
+
+      // Track tool states keyed by tool call id.
+      const toolStates = new Map<
+        string,
+        NonNullable<UIMessage['toolCalls']>[number] & { id: string }
+      >()
+      const isGated = (name: string) => tools.some((t) => t.name === name && t.needsApproval)
+
+      const patchAssistant = (patch: Partial<UIMessage>) => {
+        setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, ...patch } : m)))
+      }
+
+      // Streaming text is delivered via `delta` events; the `step` event carries
+      // the same full content, so once we've seen a delta we skip step-appends
+      // to avoid double text.
+      let hasDelta = false
+
+      const ac = new AbortController()
+      abortRef.current = ac
+
+      try {
+        // Ask the server which task (if any) this message maps to so the UI
+        // can surface the matched professional tool-set. The server re-resolves
+        // authoritatively during the run; this is only for display. Best-effort:
+        // a failure just leaves the indicator cleared.
+        try {
+          const hit = await matchTask(text)
+          setActiveTask(hit.id ? { id: hit.id, name: hit.name ?? hit.id } : null)
+        } catch {
+          setActiveTask(null)
+        }
+
+        await streamChat(
+          history,
+          model || undefined,
+          (ev: ChatEvent) => {
+            switch (ev.type) {
+              case 'tool-call': {
+                const entry = {
+                  id: ev.call.id,
+                  name: ev.call.name,
+                  arguments: ev.call.arguments,
+                  gated: isGated(ev.call.name),
+                  approvalSkipped: ev.call.approvalSkipped,
+                }
+                toolStates.set(ev.call.id, entry)
+                patchAssistant({ toolCalls: [...toolStates.values()] })
+                break
+              }
+              case 'approval-request': {
+                const existing = toolStates.get(ev.call.id) ?? {
+                  id: ev.call.id,
+                  name: ev.call.name,
+                  arguments: ev.call.arguments,
+                }
+                toolStates.set(ev.call.id, {
+                  ...existing,
+                  awaitingApproval: true,
+                  decision: undefined,
+                })
+                patchAssistant({ toolCalls: [...toolStates.values()] })
+                break
+              }
+              case 'tool-result': {
+                const existing = toolStates.get(ev.payload.call.id)
+                if (existing) {
+                  toolStates.set(ev.payload.call.id, {
+                    ...existing,
+                    result: ev.payload.result,
+                    ok: ev.payload.ok,
+                    awaitingApproval: false,
+                    durationMs: ev.payload.durationMs,
+                  })
+                  patchAssistant({ toolCalls: [...toolStates.values()] })
+                }
+                break
+              }
+              case 'tool-progress': {
+                const existing = toolStates.get(ev.payload.id)
+                if (existing) {
+                  toolStates.set(ev.payload.id, {
+                    ...existing,
+                    progress: (existing.progress ?? '') + ev.payload.chunk,
+                  })
+                  patchAssistant({ toolCalls: [...toolStates.values()] })
+                }
+                break
+              }
+              case 'delta': {
+                hasDelta = true
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantId ? { ...m, content: m.content + ev.text } : m,
+                  ),
+                )
+                break
+              }
+              case 'reasoning': {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantId ? { ...m, reasoning: (m.reasoning ?? '') + ev.text } : m,
+                  ),
+                )
+                break
+              }
+              case 'step': {
+                if (hasDelta) break
+                const stepText = (ev.step.message.content ?? '').trim()
+                if (stepText) {
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === assistantId ? { ...m, content: m.content + stepText } : m,
+                    ),
+                  )
+                }
+                break
+              }
+              case 'usage': {
+                setUsage((u) => ({
+                  prompt: u.prompt + ev.record.promptTokens,
+                  completion: u.completion + ev.record.completionTokens,
+                  cost: u.cost + ev.record.cost,
+                }))
+                break
+              }
+              case 'done': {
+                // `done.answer` is normally authoritative, but models often
+                // stream the real text through `delta`/`step` and then finish
+                // with an EMPTY answer. Overwriting unconditionally erased the
+                // text the user was already looking at — the "tool ran but the
+                // answer never shows up" bug. Keep whatever we already have.
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantId
+                      ? { ...m, content: ev.answer || m.content, pending: false }
+                      : m,
+                  ),
+                )
+                break
+              }
+              case 'error': {
+                setError(ev.message)
+                // Never leave a blank bubble: models routinely stream nothing
+                // but whitespace before a tool call, so when the run then dies
+                // (429 / network) the answer area looks empty and the user
+                // thinks the tool never ran. Put the error in the bubble too —
+                // the error bar is easy to miss. A later `done` (the backend
+                // emits one carrying the tool output on late failures) wins.
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantId
+                      ? {
+                          ...m,
+                          pending: false,
+                          content: m.content.trim() ? m.content : `⚠️ ${ev.message}`,
+                        }
+                      : m,
+                  ),
+                )
+                break
+              }
+            }
+          },
+          ac.signal,
+          sessionIdRef.current ?? undefined,
+          systemPromptRef.current || undefined,
+          taskIdRef.current ?? undefined,
+        )
+      } catch (err) {
+        setError((err as Error).message)
+        patchAssistant({ pending: false })
+      } finally {
+        setBusy(false)
+        abortRef.current = null
+        patchAssistant({ pending: false })
+        onCompleteRef.current?.(messagesRef.current)
+      }
+    },
+    [busy, tools, model],
+  )
+
+  const stop = useCallback(() => {
+    abortRef.current?.abort()
+  }, [])
+
+  /**
+   * Manually pin a task mode for the session (from the Task tab / restored
+   * session). `null` (or 'auto') reverts to server-side intent matching.
+   */
+  const setTask = useCallback((id: string | null) => {
+    setTaskIdState(id && id !== 'auto' ? id : null)
+  }, [])
+
+  /**
+   * Directly run a single tool by name (no LLM round-trip) — used by retry
+   * affordances on tool cards. Appends an assistant message hosting the tool
+   * card and streams the same SSE events as a normal chat run.
+   */
+  const runTool = useCallback(
+    async (name: string, args: Record<string, unknown>) => {
+      if (busy) return
+      setError(null)
+      setBusy(true)
+
+      const assistantId = uid()
+      const assistantMsg: UIMessage = {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        toolCalls: [],
+        pending: true,
+      }
+      setMessages((prev) => [...prev, assistantMsg])
+
+      const toolStates = new Map<
+        string,
+        NonNullable<UIMessage['toolCalls']>[number] & { id: string }
+      >()
+      const patchAssistant = (patch: Partial<UIMessage>) => {
+        setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, ...patch } : m)))
+      }
+      const ac = new AbortController()
+      abortRef.current = ac
+      const isGated = (n: string) => tools.some((t) => t.name === n && t.needsApproval)
+
+      const handle = (ev: ChatEvent) => {
+        switch (ev.type) {
+          case 'tool-call': {
+            const entry = {
+              id: ev.call.id,
+              name: ev.call.name,
+              arguments: ev.call.arguments,
+              gated: isGated(ev.call.name),
+              approvalSkipped: ev.call.approvalSkipped,
+            }
+            toolStates.set(ev.call.id, entry)
+            patchAssistant({ toolCalls: [...toolStates.values()] })
+            break
+          }
+          case 'approval-request': {
+            const existing = toolStates.get(ev.call.id) ?? {
+              id: ev.call.id,
+              name: ev.call.name,
+              arguments: ev.call.arguments,
+            }
+            toolStates.set(ev.call.id, {
+              ...existing,
+              awaitingApproval: true,
+              decision: undefined,
+            })
+            patchAssistant({ toolCalls: [...toolStates.values()] })
+            break
+          }
+          case 'tool-result': {
+            const existing = toolStates.get(ev.payload.call.id)
+            if (existing) {
+              toolStates.set(ev.payload.call.id, {
+                ...existing,
+                result: ev.payload.result,
+                ok: ev.payload.ok,
+                awaitingApproval: false,
+                durationMs: ev.payload.durationMs,
+              })
+              patchAssistant({ toolCalls: [...toolStates.values()] })
+            }
+            break
+          }
+          case 'tool-progress': {
+            const existing = toolStates.get(ev.payload.id)
+            if (existing) {
+              toolStates.set(ev.payload.id, {
+                ...existing,
+                progress: (existing.progress ?? '') + ev.payload.chunk,
+              })
+              patchAssistant({ toolCalls: [...toolStates.values()] })
+            }
+            break
+          }
+          case 'done': {
+            // Same guard as the streaming path above: never blank out text that
+            // already arrived when the final `answer` comes back empty.
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId
+                  ? { ...m, content: ev.answer || m.content, pending: false }
+                  : m,
+              ),
+            )
+            break
+          }
+          case 'error': {
+            setError(ev.message)
+            // Same "never blank" guard as the streaming path above.
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId
+                  ? {
+                      ...m,
+                      pending: false,
+                      content: m.content.trim() ? m.content : `⚠️ ${ev.message}`,
+                    }
+                  : m,
+              ),
+            )
+            break
+          }
+        }
+      }
+
+      try {
+        await streamToolRun(name, args, handle)
+      } catch (err) {
+        setError((err as Error).message)
+        patchAssistant({ pending: false })
+      } finally {
+        setBusy(false)
+        abortRef.current = null
+        patchAssistant({ pending: false })
+        onCompleteRef.current?.(messagesRef.current)
+      }
+    },
+    [busy, tools],
+  )
+
+  const reset = useCallback(() => {
+    setMessages([])
+    setError(null)
+    setUsage({ prompt: 0, completion: 0, cost: 0 })
+    setActiveTask(null)
+    setTaskIdState(null)
+  }, [])
+
+  /**
+   * Regenerate from the last user message: truncate everything after it and
+   * re-send. No-op when busy or when there is no user message to replay.
+   */
+  const regenerate = useCallback(() => {
+    if (busy) return
+    const msgs = messagesRef.current
+    const lastUserIdx = [...msgs].reverse().findIndex((m) => m.role === 'user')
+    if (lastUserIdx === -1) return
+    const lastUser = msgs[msgs.length - 1 - lastUserIdx]
+    const truncated = msgs.slice(0, msgs.length - lastUserIdx)
+    setMessages(truncated)
+    // Defer the send so state update flushes first (send reads messagesRef).
+    setTimeout(() => send(lastUser.content), 0)
+  }, [busy, send])
+
+  /**
+   * Truncate the conversation to just before the given user message and return
+   * its content so the caller can drop it into the composer for editing. The
+   * caller is responsible for calling `send` with the edited text.
+   */
+  const editFrom = useCallback(
+    (messageId: string): string | null => {
+      if (busy) return null
+      const msgs = messagesRef.current
+      const idx = msgs.findIndex((m) => m.id === messageId)
+      if (idx === -1 || msgs[idx].role !== 'user') return null
+      const content = msgs[idx].content
+      setMessages(msgs.slice(0, idx))
+      return content
+    },
+    [busy],
+  )
+
+  const setMessagesDirect = useCallback((msgs: UIMessage[]) => {
+    setMessages(msgs)
+  }, [])
+
+  return {
+    messages,
+    setMessages: setMessagesDirect,
+    busy,
+    error,
+    setError,
+    usage,
+    activeTask,
+    taskId,
+    setTask,
+    send,
+    runTool,
+    stop,
+    reset,
+    regenerate,
+    editFrom,
+    handleDecision,
+    patchToolState,
+  }
+}
