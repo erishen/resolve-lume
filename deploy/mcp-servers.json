@@ -1,0 +1,9 @@
+[
+  {
+    "id": "lume-tools",
+    "transport": "stdio",
+    "command": "lume-core",
+    "args": "--mcp /app/lume-tools/tools.lume",
+    "approval": false
+  }
+]

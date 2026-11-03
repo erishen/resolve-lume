@@ -1,0 +1,53 @@
+# syntax=docker/dockerfile:1
+# resolve-lume 后端镜像。
+# 构建上下文 = 本仓库根：把 agent-httpd / lume-core 两个子模块一起打进镜像，
+# 运行时把它们与 souls / lume-tools / .data 打包，最终只留两个二进制 + 配置。
+#
+# 依赖子模块已初始化：构建前先 `git submodule update --init --recursive`
+# （或用仓库根 Makefile 的 `make setup`）。
+
+# ---------- 阶段 1: 构建 agent-httpd (C) ----------
+FROM debian:bookworm-slim AS c-build
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc libc6-dev libcrypt-dev libsqlite3-dev make \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY agent-httpd/ ./agent-httpd/
+RUN make -C agent-httpd all
+
+# ---------- 阶段 2: 构建 lume-core (C) ----------
+FROM debian:bookworm-slim AS core-build
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc libc6-dev libcrypt-dev libsqlite3-dev make \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY lume-core/ ./lume-core/
+RUN make -C lume-core all
+
+# ---------- 阶段 3: 运行时 ----------
+FROM node:24-bookworm-slim
+# curl: agent-httpd 的 LLM 上游通道 (fork curl -N 流式)
+# git/make/ca-certificates: Python PSE 框架桥 (uv run) 拉依赖用
+# libsqlite3-0/libgomp1/libmagic1: SQLite / lightgbm(xgboost) / python-magic 共享库
+# libcrypt1: lume-core -lcrypt
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      python3 curl git make ca-certificates libsqlite3-0 libgomp1 libmagic1 libcrypt1 \
+ && rm -rf /var/lib/apt/lists/*
+# uv：可选，仅当接入 portfolio-check / pse-review 等 Python MCP 桥时启用
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+ENV UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/ UV_HTTP_TIMEOUT=600
+
+WORKDIR /app
+# docroot（agent-httpd 以 cwd 为根；真实前端由 nginx 托管，这里仅占位）
+COPY www/ ./www/
+COPY --from=c-build /build/agent-httpd/bin/agent-httpd /usr/local/bin/agent-httpd
+COPY --from=core-build /build/lume-core/bin/lume-core /usr/local/bin/lume-core
+COPY souls/ ./souls/
+COPY lume-tools/ ./lume-tools/
+COPY deploy/mcp-servers.json .data/mcp-servers.json
+RUN mkdir -p /var/log/agent-httpd /run/agent-httpd
+COPY deploy/backend-entrypoint.sh /usr/local/bin/backend-entrypoint
+RUN chmod +x /usr/local/bin/backend-entrypoint
+EXPOSE 8080
+ENTRYPOINT ["backend-entrypoint"]

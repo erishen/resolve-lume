@@ -1,0 +1,43 @@
+# resolve-lume：用 lume + lume-core + react 复刻 resolve-studio 的核心功能。
+#
+# 服务：
+#   backend  — agent-httpd (C 单二进制，内置 agent/MCP/LLM 运行时 + PSE 编排)
+#              + lume-core (以 --mcp 模式提供自定义 .lume 工具)
+#   frontend — Vite+React 静态产物，由 nginx:alpine-slim 托管，反代 /react 到 backend
+#
+# 注意：backend 仅对内网暴露（compose 内部网络），浏览器只接触 frontend:18080。
+# 变量来自仓库根 .env（从 .env.example 复制：`cp .env.example .env`）。
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    image: resolve-lume-backend:latest
+    environment:
+      PORT: "8080"
+      WORKERS: "8"
+      PSE_ENABLED: "${PSE_ENABLED:-true}"
+      PSE_SOULS_DIR: "/app/souls"
+      LLM_API_URL: "${LLM_API_URL:-https://api.openai.com/v1/chat/completions}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_MODEL: "${LLM_MODEL:-gpt-4o-mini}"
+      LLM_SYSTEM_EXTRA: "${LLM_SYSTEM_EXTRA:-}"
+    volumes:
+      # 源码态热改 souls / tools / mcp 配置无需重建镜像
+      - ./souls:/app/souls:ro
+      - ./lume-tools:/app/lume-tools:ro
+      - ./deploy/mcp-servers.json:/app/.data/mcp-servers.json:ro
+    expose:
+      - "8080"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: resolve-lume-frontend:latest
+    ports:
+      - "127.0.0.1:18080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped

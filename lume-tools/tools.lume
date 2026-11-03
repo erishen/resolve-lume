@@ -1,0 +1,23 @@
+// resolve-lume 自定义工具：经 lume-core --mcp 暴露给 agent-httpd。
+// 加载方式见 .data/mcp-servers.json 的 lume-tools 条目（command: lume-core, args: --mcp <本文件>）。
+// 工具名在 agent-httpd 侧会被重命名为 lume-tools__<name>，聊天里可直接 @ 调用。
+
+tool "rl_hello", "Return a greeting from the resolve-lume lume-core bridge. No params.", {}, () => {
+  return "hello from resolve-lume (lume-core --mcp bridge)";
+};
+
+tool "rl_echo", "Echo the input text back. Params: text (string)", {text: "string"}, (p) => {
+  return "echo: " + p["text"];
+};
+
+tool "rl_add", "Add two numbers. Params: a (number), b (number)", {a: "number", b: "number"}, (p) => {
+  return float(p["a"]) + float(p["b"]);
+};
+
+tool "rl_list_dir", "List files in a directory. Params: dir (string)", {dir: "string"}, (p) => {
+  return files(p["dir"], false);
+};
+
+tool "rl_read", "Read a text file. Params: path (string)", {path: "string"}, (p) => {
+  return read_file(p["path"]);
+};

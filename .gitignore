@@ -1,0 +1,14 @@
+# 本地环境（勿提交）
+.env
+
+# 前端构建产物
+frontend/node_modules/
+frontend/dist/
+
+# agent-httpd / lume-core 是子模块，按 gitlink 跟踪；忽略其内部的本地构建产物
+agent-httpd/bin/
+agent-httpd/www/js/
+lume-core/bin/
+
+# 运行时会话等
+.data/sessions/
