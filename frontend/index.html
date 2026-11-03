@@ -3,6 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      CSP meta (dev + direct-file fallback). Vite dev needs inline module
+      scripts for React fast-refresh and ws: for HMR; the production nginx
+      header (nginx.conf) is stricter and, being applied in addition, wins.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; form-action 'self'"
+    />
     <title>resolve-lume · Web UI</title>
   </head>
   <body>
