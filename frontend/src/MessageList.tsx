@@ -1,6 +1,6 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { UIMessage } from './types'
 import { CATEGORY_LABELS, CATEGORY_ORDER, type ExampleCategory, type ExampleItem } from './examples'
 import { NEXT_STEP_EXAMPLES } from './examples'
@@ -149,8 +149,39 @@ export function MessageList({
   }
   const hasExamples = CATEGORY_ORDER.some((c) => grouped[c].length > 0)
 
+  // ---- 跟随流式输出滚动 ----
+  // 这里原本没有任何滚动逻辑：useChat 每个 delta 都会 setMessages 产生新数组，
+  // 但没人把容器滚到底，所以长回答会朝下方长出去而视口停在原处。
+  //
+  // `.message-list` 本身就是滚动盒（.main 是 min-height:0 的 flex 列，它
+  // flex:1 + overflow-y:auto），所以 scrollTop 要打在它身上。
+  //
+  // 策略是「贴底才跟随」：用户本来就停在底部附近时才自动滚，避免他往上翻历史时
+  // 被硬拽回最新；一旦消息条数变化（新一轮开始/切换会话/回放）就重新贴底。
+  const listRef = useRef<HTMLDivElement>(null)
+  const stickToBottom = useRef(true)
+  const lastCount = useRef(0)
+
+  useEffect(() => {
+    const el = listRef.current
+    if (!el) return
+    if (messages.length !== lastCount.current) {
+      lastCount.current = messages.length
+      stickToBottom.current = true
+    }
+    if (stickToBottom.current) el.scrollTop = el.scrollHeight
+  }, [messages, busy])
+
+  const handleListScroll = () => {
+    const el = listRef.current
+    if (!el) return
+    // 80px 容差：贴着底部才算「正在看最新内容」。程序化滚动也会触发本回调，
+    // 那时距离≈0，stick 仍为 true，不会形成回环。
+    stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  }
+
   return (
-    <div className="message-list">
+    <div className="message-list" ref={listRef} onScroll={handleListScroll}>
       {messages.length === 0 && (
         <div className="empty-state">
           <div className="empty-title">想试试这个 Agent？挑一个问题开始</div>

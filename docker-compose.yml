@@ -1,11 +1,21 @@
 # resolve-lume：用 lume + lume-core + react 复刻 resolve-studio 的核心功能。
 #
-# 服务：
+# 运行拓扑 = 两个 compose 容器 + 一个宿主常驻 sidecar 进程：
 #   backend  — agent-httpd (C 单二进制，内置 agent/MCP/LLM 运行时 + PSE 编排)
 #              + lume-core (以 --mcp 模式提供自定义 .lume 工具)
-#   frontend — Vite+React 静态产物，由 nginx:alpine-slim 托管，反代 /react 到 backend
+#   frontend — Vite+React 静态产物，由容器内 Node 服务
+#              (frontend/server-entrypoint.mjs) 托管，反代 /api 到宿主 sidecar。
+#              ⚠️ 不是 nginx：nginx.conf 只是退役参考文件，见该文件头部注释。
+#   sidecar  — Node 网关 + 功能后端（宿主 macOS 常驻进程，监听 127.0.0.1:3000）：把
+#              lume 的 SSE 方言转成前端方言、补齐 agent-httpd 没有的 /api/*（sessions/
+#              jobs/tasks/skills/mcp/fs…），并执行内置工具（read/write/shell/make/
+#              stock-scan…）。由 `make sidecar-host-start` 经 sidecar/launcher.js 拉起，
+#              不再由 compose 管理（无容器、无 healthcheck、无 restart 策略）。
 #
-# 注意：backend 仅对内网暴露（compose 内部网络），浏览器只接触 frontend:18080。
+# 调用链：浏览器 → 127.0.0.1:18085 → frontend 容器 Node 服务 →
+#   /api/*  → host.docker.internal:3000 → 宿主 sidecar（loopback）→ 127.0.0.1:8080 backend
+#   /react/*→ backend:8080（compose 内网直连）
+#
 # 变量来自仓库根 .env（从 .env.example 复制：`cp .env.example .env`）。
 services:
   backend:
@@ -16,12 +26,25 @@ services:
     environment:
       PORT: "8080"
       WORKERS: "8"
-      PSE_ENABLED: "${PSE_ENABLED:-true}"
+      # 固定 false：PSE 现在由前端开关控制 —— sidecar 依开关决定把 /api/chat
+      # 转发到 /react/api/pse（三角色）还是 /react/api/chat（单 agent）。
+      # 这里若为 true，agent-httpd 对普通 chat 路由也无条件跑 PSE，开关会失效。
+      PSE_ENABLED: "false"
       PSE_SOULS_DIR: "/app/souls"
       LLM_API_URL: "${LLM_API_URL:-https://api.openai.com/v1/chat/completions}"
       LLM_API_KEY: "${LLM_API_KEY:-}"
       LLM_MODEL: "${LLM_MODEL:-gpt-4o-mini}"
       LLM_SYSTEM_EXTRA: "${LLM_SYSTEM_EXTRA:-}"
+      # sidecar 工具代理（lume-tools/sidecar_ro.lume）的出站目标与凭据。
+      # 变量名刻意避开 *_TOKEN：lume 的 env() 会把含 TOKEN/SECRET/API_KEY/PASSWORD
+      # 的名字屏蔽成 null（lume-core builtins_fs.c:85-101），换个名字才读得到。
+      # 值与 frontend 容器、宿主 sidecar 用的 SIDECAR_TOKEN 同源（同一份 .env）。
+      # 容器内经 host.docker.internal 打宿主 loopback 上的 sidecar:3000 —— 这条路径
+      # 已被 frontend 容器反代 /api 实测走通（18085/api/tools 200）。
+      SIDECAR_TOOLS_URL: "${SIDECAR_TOOLS_URL:-http://host.docker.internal:3000/api/tools/call}"
+      # 必填且必须是随机值：源码不再提供任何默认令牌（见 .env.example）。
+      # 缺失时 compose 直接报错退出，避免带着公开默认值起一套可执行 shell 的服务。
+      SIDECAR_TOOLS_AUTH: "${SIDECAR_TOKEN:?SIDECAR_TOKEN must be set in .env}"
     # 容器内 127.0.0.1 指向容器自身；宿主 LLM 网关跑在 19070，需经 host.docker.internal 访问
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -29,43 +52,69 @@ services:
       # 源码态热改 souls / tools / mcp 配置无需重建镜像
       - ./souls:/app/souls:ro
       - ./lume-tools:/app/lume-tools:ro
-      - ./deploy/mcp-servers.json:/app/.data/mcp-servers.json:ro
+      # backend 只读 lume-tools 配置：agent-httpd(C 移植版) 的 MCP 客户端
+      # 目前无法完成 node/npx server 的握手，npx server 会拖死启动；
+      # 完整 6 个配置仅供前端面板显示(由 sidecar 读取 deploy/mcp-servers.json)。
+      - ./deploy/mcp-servers.backend.json:/app/.data/mcp-servers.json:ro
+      # router 自动同步会向 .data/mcp-servers-router.json 注入 memory/think
+      # 两个 npx server，同样会让 backend 卡死；用空 stub ro 覆盖之。
+      - ./deploy/mcp-servers-router.stub.json:/app/.data/mcp-servers-router.json:ro
     expose:
       - "8080"
+    # 宿主 sidecar（127.0.0.1:3000）经 loopback 访问 backend 的 /react/api/*；
+    # 只绑 loopback，不对局域网暴露。
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
 
-  sidecar:
-    build:
-      context: ./sidecar
-      dockerfile: Dockerfile
-    image: resolve-lume-sidecar:latest
-    environment:
-      PORT: "3000"
-      AGENT_HTTPD_URL: "http://backend:8080"
-      PSE_SOULS_DIR: "/app/souls"
-      FS_ROOTS: "/app/souls,/app/lume-tools"
-      WORKSPACE_DIR: "${WORKSPACE_DIR:-}"
-      LLM_MODEL: "${LLM_MODEL:-gpt-4o-mini}"
-    volumes:
-      - ./souls:/app/souls:ro
-      - ./lume-tools:/app/lume-tools:ro
-      - sidecar-data:/app/.data
-    expose:
-      - "3000"
-    depends_on:
-      - backend
-    restart: unless-stopped
+  # sidecar 不再是 compose 服务：它现在是宿主 macOS 上的常驻进程，监听 127.0.0.1:3000，
+  # 由 `make sidecar-host-start` 经 sidecar/launcher.js 拉起（工具直接读写宿主真实路径，
+  # 无需容器 bind mount / 数据卷）。
+  #   - frontend 容器经 host.docker.internal:3000 反代到它（见下方 frontend.extra_hosts）；
+  #   - backend 发布 127.0.0.1:8080，供宿主 sidecar 经 loopback 访问 /react/api/*；
+  #   - SIDECAR_TOKEN 仍从 .env 读取，与 frontend 容器启动时注入的
+  #     X-Sidecar-Token 同源（注入逻辑在 server-entrypoint.mjs）。
+  # 启停宿主 sidecar 请用 `make sidecar-host-start` / `make sidecar-host-stop`，
+  # compose 不再对它做 healthcheck / restart / 生命周期管理。
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     image: resolve-lume-frontend:latest
+    environment:
+      # 必填，与 .env 的 SIDECAR_TOKEN 同源。server-entrypoint.mjs 在启动时
+      # fail-closed：缺失会直接退出，且向下游注入时强制覆盖客户端同名头。
+      SIDECAR_TOKEN: "${SIDECAR_TOKEN:?SIDECAR_TOKEN must be set in .env}"
     ports:
       - "127.0.0.1:18085:80"
+    # Node 服务要把 /api/* 反代到宿主 loopback 上的 sidecar（127.0.0.1:3000），
+    # 必须能把 host.docker.internal 解析为宿主网关 —— 这是 macOS Docker Desktop /
+    # OrbStack 提供的宿主别名；host-gateway 是 Linux 容器内的标准写法。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
-      - sidecar
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    # 前端使用 Node.js 服务，无需 NET_BIND_SERVICE（容器内以 root 身份运行）。
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
-
-volumes:
-  sidecar-data:

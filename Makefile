@@ -10,8 +10,25 @@ setup:
 build: setup
 	docker compose build
 
+# 起两个容器（backend + frontend）。sidecar 是宿主常驻进程，不在此命令内——
+# 需另跑 `make sidecar-host-start`。restart: unless-stopped 负责容器开机自启与崩溃重拉。
 up: build
 	docker compose up -d
+
+# 等 /api 真正可用（容器 Up ≠ 可用：健康检查与反代链路都要通）。
+wait:
+	@printf "waiting for http://127.0.0.1:18085 "
+	@i=0; \
+	until curl -fsS -m 2 http://127.0.0.1:18085/api/tools >/dev/null 2>&1; do \
+		i=$$((i+1)); \
+		if [ $$i -ge 90 ]; then \
+			echo ""; echo "timed out after 90s — check: make logs"; docker compose ps; exit 1; \
+		fi; \
+		printf "."; sleep 1; \
+	done; echo ""; echo "ready: http://127.0.0.1:18085"
+
+# 一条命令起两个容器：build + up + 等就绪（不含宿主 sidecar，见 sidecar-host-start）。
+start: up wait
 
 down:
 	docker compose down
@@ -23,4 +40,133 @@ logs:
 frontend-up:
 	docker compose up -d --build frontend
 
-.PHONY: setup build up down logs frontend-up
+# 仅重建 sidecar —— ⚠️ 已失效：compose 已移除 sidecar 服务，此目标会报
+# "no such service: sidecar"。sidecar 现为宿主常驻进程，改 sidecar/ 后重启它：
+#   make sidecar-host-stop && make sidecar-host-start
+# 若要恢复容器 sidecar，需先在 docker-compose.yml 重新加回 sidecar service 定义。
+sidecar-up:
+	docker compose up -d --build sidecar
+
+# ================= 宿主 sidecar 模式 =================
+# 说明：把 sidecar 从容器搬到宿主 macOS 常驻（监听 127.0.0.1:3000），backend/frontend
+# 仍在容器里。切换顺序：【先停容器 sidecar】再起宿主 sidecar，否则两边抢 3000 端口：
+#   docker compose rm -sf sidecar
+#   make sidecar-host-start
+# 回切容器模式：make sidecar-host-stop && docker compose up -d sidecar
+# 生命周期限制：launcher 是 nohup 进程（重启电脑后不会自动起来），开机自启需另配
+# launchd plist，详见 README「宿主 sidecar 模式」小节。
+
+# 拉起 launcher（:3099 控制面），就绪后 POST /start 拉起 sidecar（:3000）
+sidecar-host-start:
+	@mkdir -p .data-sidecar
+	@if [ -f .data-sidecar/launcher.pid ] && kill -0 "$$(cat .data-sidecar/launcher.pid)" 2>/dev/null; then \
+		echo "launcher already running (pid=$$(cat .data-sidecar/launcher.pid))"; \
+	else \
+		nohup node sidecar/launcher.js >> .data-sidecar/launcher.log 2>&1 & \
+		echo "launcher started (pid=$$!)"; \
+	fi
+	@printf "waiting for launcher http://127.0.0.1:3099 "
+	@i=0; \
+	until curl -fsS -m 1 http://127.0.0.1:3099/health >/dev/null 2>&1; do \
+		i=$$((i+1)); \
+		if [ $$i -ge 15 ]; then echo ""; echo "timed out — see .data-sidecar/launcher.log"; exit 1; fi; \
+		printf "."; sleep 1; \
+	done; echo " ok"
+	@curl -fsS -m 2 -X POST http://127.0.0.1:3099/start >/dev/null && echo "sidecar requested -> http://127.0.0.1:3000"
+	@echo "frontend 入口: http://127.0.0.1:18085（若 502，确认容器 sidecar 已停、backend 容器在跑）"
+
+# 停 launcher（其内部 SIGTERM 处理会连带停掉 sidecar 子进程）并清 pidfile
+sidecar-host-stop:
+	@if [ ! -f .data-sidecar/launcher.pid ]; then echo "launcher.pid 不存在（未启动？）"; \
+	else \
+		LPID=$$(cat .data-sidecar/launcher.pid); \
+		if kill -0 "$$LPID" 2>/dev/null; then \
+			kill "$$LPID"; \
+			printf "waiting for launcher pid=$$LPID "; \
+			i=0; \
+			while kill -0 "$$LPID" 2>/dev/null; do \
+				i=$$((i+1)); \
+				if [ $$i -ge 20 ]; then echo ""; echo "launcher 未退出，可手动 kill -9 $$LPID"; exit 1; fi; \
+				printf "."; sleep 1; \
+			done; echo " stopped"; \
+		else echo "launcher pid=$$LPID 已死，仅清理 pidfile"; fi; \
+	fi
+	@rm -f .data-sidecar/launcher.pid .data-sidecar/sidecar.pid
+
+# 状态速查：launcher 存活 + sidecar 存活 + 两端 /health + 3000 是否被容器 sidecar 抢占
+sidecar-host-status:
+	@echo "--- launcher (:3099) ---"
+	@if [ -f .data-sidecar/launcher.pid ]; then \
+		LPID=$$(cat .data-sidecar/launcher.pid); \
+		if kill -0 "$$LPID" 2>/dev/null; then echo "running pid=$$LPID"; \
+		else echo "pidfile 残留 pid=$$LPID（进程已死）"; fi; \
+	else echo "not started"; fi
+	@curl -fsS -m 1 http://127.0.0.1:3099/health >/dev/null 2>&1 \
+		&& echo "launcher /health: ok" || echo "launcher /health: no response"
+	@echo "--- sidecar (:3000) ---"
+	@if [ -f .data-sidecar/sidecar.pid ]; then \
+		SPID=$$(cat .data-sidecar/sidecar.pid); \
+		if kill -0 "$$SPID" 2>/dev/null; then echo "running pid=$$SPID"; \
+		else echo "pidfile 残留 pid=$$SPID（进程已死）"; fi; \
+	else echo "no pidfile"; fi
+	@curl -fsS -m 1 http://127.0.0.1:3000/health >/dev/null 2>&1 \
+		&& echo "sidecar /health: ok" || echo "sidecar /health: no response"
+	@echo "--- 端口 3000 占用 ---"
+	@if lsof -nP -iTCP:3000 -sTCP:LISTEN >/dev/null 2>&1; then \
+		lsof -nP -iTCP:3000 -sTCP:LISTEN; \
+		if docker compose ps sidecar 2>/dev/null | grep -q "Up"; then \
+			echo "!! 容器 sidecar 仍在运行，与宿主 sidecar 抢 3000"; \
+			echo "   切换: docker compose rm -sf sidecar && make sidecar-host-start"; \
+		fi; \
+	else echo "3000 空闲"; fi
+
+# ================= sidecar 工具代理层（.lume）的生成 =================
+# 为什么要生成而不是手写：schema 必须与 sidecar/builtin-tools.json 同源，手写会漂出
+# 「前端面板有、agent 调不到」的假象（11-04 那次 PSE FAIL 的根因就是工具面断层）。
+# 生成器还会先校验 C 侧三处硬限（desc≤160B、toolName≤48B、MCP 单帧≤64KiB），
+# 超限会静默出事：mcp.c:841 的 name 解析失败会直接 return，把整张工具表丢掉。
+
+# 改了 builtin-tools.json 或 --only 名单后，重新生成给 agent 用的代理层
+tools-lume:
+	node deploy/gen-sidecar-tools.mjs
+
+# 只校验不写文件（先看名单和长度是否越界）
+tools-lume-check:
+	node deploy/gen-sidecar-tools.mjs --check
+
+# ---- A2A peer 面(静态节点: resolve.* 只读摘要能力, 不带 agent 面) ----
+# 详见 peer_node.lume。Lume server 用工作树的完整版(../../lume/lume/bin/lume),
+# 与 work/lume/lume-lan 的 LUME_REPO_BIN 同型 —— ~/.local/bin/lume 是 agent-httpd
+# 版, 只出静态面, 不认 /peer/* 路由。PEER_* 从 .env 取; 日志落 .runtime/。
+LUME_SERVER ?= ../../lume/lume/bin/lume
+PEER_PORT_RUN ?= $(shell grep -E '^PEER_PORT=' .env 2>/dev/null | cut -d= -f2 | head -1)
+ifeq ($(strip $(PEER_PORT_RUN)),)
+PEER_PORT_RUN := 18113
+endif
+
+peer-check:
+	@if [ ! -x "$(LUME_SERVER)" ]; then \
+	  echo "✗ 找不到 $(LUME_SERVER)" >&2; exit 1; fi
+	@$(LUME_SERVER) --check peer_node.lume
+
+# 后台起本节点 peer 端点。起完需在 lume-a2a 的 fleet 里加
+# resolve-lume=127.0.0.1:$(PEER_PORT_RUN)。
+peer-serve: peer-check
+	@mkdir -p .runtime
+	@if pgrep -f "peer_node.lume" >/dev/null 2>&1 && lsof -tiTCP:$(PEER_PORT_RUN) -sTCP:LISTEN >/dev/null 2>&1; then \
+	  echo "  resolve-lume peer 已在 :$(PEER_PORT_RUN) 运行"; \
+	 else \
+	  set -a; . ./.env; set +a; \
+	  PEER_BIND=$${PEER_BIND:-127.0.0.1} PEER_PORT=$(PEER_PORT_RUN) $(LUME_SERVER) peer_node.lume > .runtime/peer_node.log 2>&1 & \
+	  echo "  已启动 resolve-lume peer :$(PEER_PORT_RUN) → .runtime/peer_node.log"; \
+	  sleep 1; tail -3 .runtime/peer_node.log; fi
+
+# 网关答案组装回归测试：纯 Node，无外部依赖，不触碰运行中的服务。
+# 断言「工具调用前的中间话 / PSE 计划与评审」不会拼进最终答案。
+test-gateway:
+	@node sidecar/translateFrame.test.js
+	@node sidecar/articleFrontmatter.test.js
+	@node sidecar/toolContract.test.js
+	@node sidecar/security.test.js
+
+.PHONY: setup build up wait start down logs frontend-up sidecar-up sidecar-host-start sidecar-host-stop sidecar-host-status tools-lume tools-lume-check peer-check peer-serve test-gateway

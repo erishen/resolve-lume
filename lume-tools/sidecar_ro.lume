@@ -1,0 +1,163 @@
+// ⚠️ 自动生成，不要手改。生成器: deploy/gen-sidecar-tools.mjs
+// 数据源: sidecar/builtin-tools.json（schema 与实现同源，所以这里只做映射）
+//
+// 作用: 把宿主 sidecar 的业务工具以 stdio MCP 暴露给 agent-httpd，让跑循环的 C
+// 进程真的能调用它们。此前 sidecar 的 42 个工具只进前端面板 /api/tools 和手动
+// /api/tool/run，agent 只能看到内置 7 + lume-tools 5 + router 代理 4，导致需要
+// 真实数据面的任务必然空转（PSE FAIL 的根因）。
+//
+// 依赖两个环境变量（compose backend 注入）:
+//   SIDECAR_TOOLS_URL  例 http://host.docker.internal:3000/api/tools/call
+//   SIDECAR_TOOLS_AUTH 与 sidecar 的 SIDECAR_TOKEN 同值。刻意不叫 *_TOKEN：
+//     lume 的 env() 对含 TOKEN/SECRET/API_KEY/PASSWORD 的名字返回 null
+//     （builtins_fs.c:85-101 env_is_sensitive），改名才取得到。
+
+// 所有 tool 共用这一条出站调用。工具名在各自 handler 里写死，LLM 无法把
+// name 传成别的工具，因此不会把请求绕回 agent-httpd 形成回环。
+func sidecar_tool(tool_name, args_json) {
+  let base = env("SIDECAR_TOOLS_URL");
+  if (len(base) == 0) { return "error: SIDECAR_TOOLS_URL not set (compose backend env)"; }
+  let hdr = {"Content-Type": "application/json", "X-Sidecar-Token": env("SIDECAR_TOOLS_AUTH")};
+  let body = "{\"name\":\"" + tool_name + "\",\"arguments\":" + args_json + "}";
+  // allow_private: sidecar 在 127.0.0.1，lume 的 SSRF 闸门默认拒私有地址
+  //                （builtins_http.c:25-26,901）——不加这一句调用必失败。
+  // timeout 600 是 lume 的封顶；sidecar 侧 spawnCapture 自己是 300s，够用。
+  let r = http_post(base, {"headers": hdr, "body": body, "timeout": 600, "max_bytes": 2097152, "allow_private": true});
+  if (r["ok"] != true) { return "error: sidecar call failed: " + str(r["err"]) + " status=" + str(r["status"]); }
+  // json() 解析失败会中止脚本；包 try() 才能把「上游返回非 JSON」变成可读的
+  // 工具错误。try 的成功值在 ok 键、失败信息在 err 键（builtins.c native_try）。
+  let box = try(() => { return json(str(r["body"])); });
+  let perr = get(box, "err", null);
+  if (perr != null) { return "error: sidecar returned non-JSON: " + substr(str(r["body"]), 0, 300) + " (" + str(perr) + ")"; }
+  let j = get(box, "ok", null);
+  if (j == null) { return "error: sidecar result is null"; }
+  let errv = str(get(j, "error", ""));
+  if (len(errv) > 0) { return "tool error [" + tool_name + "]: " + errv; }
+  let outv = str(get(j, "result", ""));
+  // 兜住 MCP 单帧 64KiB（bridge_mcp.c:54）：超了 snprintf 会截出非法 JSON，
+  // 把整条 tool 结果变成协议错误。取 20000 是因为要留转义余量——极端情况下
+  // 每个引号/反斜杠都会翻倍（20000*2 + 包装 < 65536），16000/40000 都不够稳。
+  if (len(outv) > 20000) { outv = substr(outv, 0, 20000) + "\n[output cut at MCP frame limit; the part above is complete, no retry needed]"; }
+  // 双保险：业务函数历史上把可读失败写成 `error: ...`。sidecar 已在统一
+  // 出口规范化，这里再兜住非 builtin 工具，避免 agent-httpd 把它当协议
+  // 错误(502)并吞掉正文 —— 模型会因此看不到「服务未启动/未知平台」而重试。
+  if (substr(outv, 0, 6) == "error:") { outv = "tool error [" + tool_name + "]: " + substr(outv, 6); }
+  return outv;
+}
+
+tool "echo", "Echo text back. req: text. Use only to confirm the tool bridge is alive.", {"text": "string"}, (p) => {
+  return sidecar_tool("echo", stringify(p));
+};
+
+tool "calculator", "Evaluate basic arithmetic. req: expression. No variables or functions.", {"expression": "string"}, (p) => {
+  return sidecar_tool("calculator", stringify(p));
+};
+
+tool "read-file", "Read a text file. rel-base=work/ req: path. Repo short name works (lume-a2a/README.md). Page with offset/limit. Never use to guess article paths.", {"path": "string", "offset": "int", "limit": "int"}, (p) => {
+  return sidecar_tool("read-file", stringify(p));
+};
+
+tool "analyze-dir", "Recursively scan a directory, bounded report. rel-base=work/ req: dir. Repo short names resolve. Read-only; use for unfamiliar folders.", {"dir": "string", "ignore": "array", "maxFiles": "number"}, (p) => {
+  return sidecar_tool("analyze-dir", stringify(p));
+};
+
+tool "analyze-code-dir", "Symbol skeleton + LSP diagnostics, falls back to analyze-dir. rel-base=work/ req: dir. Read-only. Never call to guess article project paths.", {"dir": "string", "maxFiles": "number", "depth": "number", "includeDiagnostics": "bool"}, (p) => {
+  return sidecar_tool("analyze-code-dir", stringify(p));
+};
+
+tool "doc-library-search", "Full-text search in local Markdown library. req: q. Needs markdown-library :3300; if down, report it plainly, do not retry blindly.", {"q": "string", "check_broken": "bool"}, (p) => {
+  return sidecar_tool("doc-library-search", stringify(p));
+};
+
+tool "photo-duplicates", "Find duplicate photos + library stats (read-only). Needs photo-library :3100; if down, report it plainly instead of retrying.", {"similar": "bool", "stats": "bool"}, (p) => {
+  return sidecar_tool("photo-duplicates", stringify(p));
+};
+
+tool "video-library-list", "List indexed videos (codec/resolution/duration). Needs video-library :3200; if down, report it plainly instead of retrying.", {"limit": "int"}, (p) => {
+  return sidecar_tool("video-library-list", stringify(p));
+};
+
+tool "privacy-audit", "9 read-only privacy/secret checks on a git repo. target=repo short name or rel path under work/. Never modifies files.", {"target": "string", "exclude_path": "string"}, (p) => {
+  return sidecar_tool("privacy-audit", stringify(p));
+};
+
+tool "stock-scan", "Scan A-share technical signals (read-only, takes minutes). Call ONCE; never retry just because it is slow.", {"output": "string"}, (p) => {
+  return sidecar_tool("stock-scan", stringify(p));
+};
+
+tool "dev-stats", "Dev stats: reads/CI/clone CSV. target in [report|juejin|segmentfault|ci|actions]. Never use shell/read-file here; quote only tool output.", {"target": "string", "args": "string"}, (p) => {
+  return sidecar_tool("dev-stats", stringify(p));
+};
+
+tool "hot-news", "Generate compliant social copy for a hot topic (1-5 min). req: topic. Call DIRECTLY, never read files first. Paid provider needs approval.", {"topic": "string", "news_dir": "string", "platform": "string", "category": "string", "provider": "string"}, (p) => {
+  return sidecar_tool("hot-news", stringify(p));
+};
+
+tool "hot-news-fetch", "Fetch hot-news snapshots into news/ (pipeline step 1). sources is a COMMA-SEPARATED STRING like \"weibo,infoq\", NOT an array.", {"limit": "int", "max_age_days": "int", "clean": "bool", "use_proxy": "bool", "out": "string"}, (p) => {
+  return sidecar_tool("hot-news-fetch", stringify(p));
+};
+
+tool "hot-news-topics", "List writable hot topics from existing news/ snapshots (read-only). Run hot-news-fetch first if empty.", {"news_dir": "string"}, (p) => {
+  return sidecar_tool("hot-news-topics", stringify(p));
+};
+
+tool "hot-news-check", "Offline-check a hot-news draft before publishing. platform in [xiaohongshu|zhihu|toutiao]. Never publishes.", {"platform": "string", "article": "string"}, (p) => {
+  return sidecar_tool("hot-news-check", stringify(p));
+};
+
+tool "article-discover", "Scan workspace repos for NEW article projects. add=false = dry-run (default writes projects.json). Returns its path: NEVER read-file to find it.", {"add": "bool"}, (p) => {
+  return sidecar_tool("article-discover", stringify(p));
+};
+
+tool "article-validate", "VALIDATE article files only - never writes/publishes. project from enum; omit to list queue. Publishing is NOT exposed to you: say so.", {"project": "string", "confirm": "bool"}, (p) => {
+  return sidecar_tool("article-validate", stringify(p));
+};
+
+tool "article-write", "Write article? Call DIRECTLY with project=KEY; NEVER read files or guess paths first. Omit project to list candidates. ONE article per call.", {"project": "string", "publish": "bool", "style": "string", "provider": "string"}, (p) => {
+  return sidecar_tool("article-write", stringify(p));
+};
+
+tool "skill-run", "Load a SOUL.md skill by name (planner/specialist/evaluator). article-write is a TOOL not a skill: call that tool with project=KEY.", {"name": "string", "skill": "string"}, (p) => {
+  return sidecar_tool("skill-run", stringify(p));
+};
+
+tool "pick-post", "Pick one published WordPress post at random (read-only). Requires ERISHEN_BASE in .env.", {}, (p) => {
+  return sidecar_tool("pick-post", stringify(p));
+};
+
+tool "resume-tailor", "Tailor a resume to a JD or recommend positions (1-5 min). req: mode in [customize|recommend]. Call DIRECTLY, never read files first.", {"mode": "string", "jd_text": "string", "provider": "string"}, (p) => {
+  return sidecar_tool("resume-tailor", stringify(p));
+};
+
+tool "interview-questions", "Generate 9 technical interview questions (1-5 min). req: mode. Call DIRECTLY, never read files first.", {"mode": "string", "subject": "string", "jd_text": "string", "resume_text": "string", "provider": "string"}, (p) => {
+  return sidecar_tool("interview-questions", stringify(p));
+};
+
+tool "system-info", "Runtime diagnostics: memory/CPU/uptime/platform. Optional section filter.", {"section": "string"}, (p) => {
+  return sidecar_tool("system-info", stringify(p));
+};
+
+tool "capabilities", "Ask FIRST for publish/make/shell/PSE-review or \"is X available\": lists ALL tools and which are exposed to you. NEVER claim a capability is missing.", {}, (p) => {
+  return sidecar_tool("capabilities", stringify(p));
+};
+
+// 未暴露的工具（needsApproval 标记不可信，见生成器注释；要加就改 --only 重生成）:
+//   write-file
+//   shell
+//   browser-open
+//   browser-screenshot
+//   portfolio-check
+//   csv-analyze
+//   product-analyze
+//   pse-review
+//   pse-review-latest
+//   crm-task
+//   build-juejin
+//   juejin-draft
+//   juejin-publish
+//   wechat-draft
+//   sf-pw-publish
+//   article-publish
+//   article-archive
+//   hot-news-publish
+//   make

@@ -1,0 +1,1014 @@
+{
+  "tools": [
+    {
+      "name": "capabilities",
+      "description": "Read-only capability catalogue. Call this FIRST when the user asks to publish, release, run make/shell, review PSE jobs, or asks whether some capability exists. Lists every implemented tool and which ones are exposed to this agent, so you never again claim a capability is missing. Safe, no arguments, no side effects.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "echo",
+      "description": "Echo the provided text back to the caller.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The text to echo."
+          }
+        },
+        "required": [
+          "text"
+        ]
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "calculator",
+      "description": "Evaluate a basic arithmetic expression, e.g. \"(2 + 3) * 4\".",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "expression": {
+            "type": "string",
+            "description": "The arithmetic expression to evaluate."
+          }
+        },
+        "required": [
+          "expression"
+        ]
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "read-file",
+      "description": "Read a text file from disk and return its contents (up to 2000 lines / 64 KiB per call). For large files, pass `offset` (1-based line number, default 1) and `limit` (max lines, default 2000) to page through; the response reports the line range and total line count so you can decide the next offset.\nSandbox (authoritative): absolute paths are accepted under these read roots — /workspace. Paths outside (or non-existent like \"/app/workspace/…\") are blocked; check the target file path against these roots first.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path (absolute, or relative to the harness working directory)."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "1-based line number to start reading from (default 1). Use with `limit` to page through a large file."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum lines to read in this call (default / max 2000)."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "analyze-dir",
+      "description": "Recursively scan a directory and return a BOUNDED structured report (file tree, per-file size/line counts, and short snippets) so the agent can explain what the directory does. Read-only, sandboxed, no approval. Output is hard-capped to fit the model context — safe even on very large repos. Use this (not raw directory_tree) to understand an unfamiliar project or folder before summarizing it.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "dir": {
+            "type": "string",
+            "description": "Directory path (absolute, or relative to the harness working directory)."
+          },
+          "ignore": {
+            "type": "array",
+            "description": "Optional extra directory names to skip (node_modules/.git/.venv/caches are skipped by default)."
+          },
+          "maxFiles": {
+            "type": "number",
+            "description": "Max number of files to include snippets for (default 40)."
+          }
+        },
+        "required": [
+          "dir"
+        ]
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "analyze-code-dir",
+      "description": "Analyze a code directory using Serena's language-server tooling: activates the directory as a project and returns a structured report with each top source file's symbol skeleton (classes/functions/types) and LSP diagnostics (errors/warnings). Far richer than a raw file walk for understanding \"what does this code do?\". Read-only, sandboxed, no approval. If Serena is not connected (or its language server cannot analyze the code), it transparently falls back to the bounded raw `analyze-dir` walker. Output is hard-capped to fit the model context.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "dir": {
+            "type": "string",
+            "description": "Directory path (absolute, or relative to the harness working directory) to analyze."
+          },
+          "maxFiles": {
+            "type": "number",
+            "description": "Max number of top source files to pull semantic info for (default 14)."
+          },
+          "depth": {
+            "type": "number",
+            "description": "How many directory levels to descend when collecting source files (default 2)."
+          },
+          "includeDiagnostics": {
+            "type": "boolean",
+            "description": "Also fetch LSP diagnostics per file (default true)."
+          }
+        },
+        "required": [
+          "dir"
+        ]
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "write-file",
+      "description": "Create or overwrite a file with the given content (creates parent directories as needed). Relative paths write to the current run workspace (or sandbox/<task>/ otherwise); use absolute paths to write elsewhere. Requires human approval.\nSandbox (authoritative): absolute paths are ONLY accepted under these writable roots — /app, /workspace/frameworks/llamaindex-pse/tasks/hot-news. Anything else is blocked (\"path escapes the allowed sandbox\"); when that happens, write to a path under one of these roots or a relative sandbox/<task>/ path instead.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File path (relative to the run workspace / task sandbox directory, or absolute)."
+          },
+          "content": {
+            "type": "string",
+            "description": "Full file content to write."
+          },
+          "task": {
+            "type": "string",
+            "description": "Task name for isolated sandbox subdirectory (e.g. \"lru-cache\", \"article-draft\"). Files for different tasks are kept separate. Defaults to \"default\". Ignored when the run has a workspace."
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ]
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "shell",
+      "description": "Run a shell command in the harness working directory (15s timeout). Use to run tests, builds, or git commands. Requires human approval.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The shell command to execute, e.g. \"pnpm -C packages/core test\"."
+          }
+        },
+        "required": [
+          "command"
+        ]
+      },
+      "server": "builtin",
+      "needsApproval": true
+    },
+    {
+      "name": "browser-open",
+      "description": "Open a URL in a headless browser and return the page title plus readable text content (max 8 KiB). Use for read-only web research.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The http(s) URL to visit."
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "browser-screenshot",
+      "description": "Open a URL in a headless browser, save a full-page screenshot PNG under .data/screenshots/, and return the absolute file path. Use to visually inspect a page.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The http(s) URL to visit."
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "pick-post",
+      "description": "Randomly pick one published post from the user's WordPress blog (read-only, no approval). Returns JSON { id, title, link }. Requires ERISHEN_BASE in .env. Use before commenting, or when the user wants a random blog post.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "skill-run",
+      "description": "Load a skill's full instructions by name (reads skills/<name>/SKILL.md and lists any scripts/). Use this to start following a documented workflow reliably, instead of guessing the file path. Read-only, no approval.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Skill name, e.g. \"weekly-investment\"."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "portfolio-check",
+      "description": "投资前数据体检：在 analysis-lens 项目里依次执行 make calculate / make analyze / make compare，刷新本地持仓快照并扫描异常（如年化收益率为天文数字、整体收益异常、产品级离群值等），返回体检结论。用于生成投资复盘前的前置检查，确认数据无误后再做正式分析。只读本地数据，不修改持仓。",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "stock-scan",
+      "description": "A股全市场技术信号扫描：在 market-analyzer 项目里运行 scan 子命令，扫描全市场 K 线，输出趋势/买入/卖出信号 JSON。用于投资研究的前置信号发现（如\"看看今天全市场有哪些值得关注的信号\"）。只读本地行情快照，不修改任何持仓或数据。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "output": {
+            "type": "string",
+            "description": "JSON 报告输出路径（默认 output/reports/scan_result.json）。"
+          }
+        },
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "csv-analyze",
+      "description": "CSV 数据多智能体分析：对给定 CSV 文件用 LangGraph 流水线做数据剖析/趋势/异常检测，产出 HTML 报告（langgraph-csv-analyst）。用于\"把这个 CSV 分析一下给我一份报告\"之类的请求。只读输入文件，不改动数据。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string",
+            "description": "CSV 文件路径（绝对路径或工作区内相对路径）。留空则用内置样例样本 （data/sample_sales.csv，用于\"帮我把这个 CSV 分析一下\"快速演示）。"
+          },
+          "output": {
+            "type": "string",
+            "description": "HTML 报告输出路径（默认 <csv 同名>_report.html，落在 csv 所在目录）。"
+          },
+          "profile": {
+            "type": "boolean",
+            "description": "只快速剖析（不产图/异常检测），更快。",
+            "default": false
+          }
+        },
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "product-analyze",
+      "description": "产品/竞品分析：用 crewai-product-analyst 的三个智能体（调研/策略/撰写）对给定产品名或线上产品做产品分析，产出 Markdown 报告并保存到 sandbox/。用于\"帮我研究一下 X 这个产品\"之类的请求。只读，不改动任何本地数据。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "product": {
+            "type": "string",
+            "description": "产品名或线上产品描述（如 \"Notion AI\"）。"
+          },
+          "output": {
+            "type": "string",
+            "description": "Markdown 报告输出路径（可选；默认保存到 sandbox/<产品>-product-analysis.md）。"
+          }
+        },
+        "required": [
+          "product"
+        ]
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "doc-library-search",
+      "description": "本地 Markdown 文档库全文检索（markdown-library，只读）：FTS5 命中片段检索 + 可选坏链/健康检查。用于\"在我的 markdown 文档库里搜一下 xxx\"。服务默认 http://127.0.0.1:3100（未运行时返回启动指引）。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string",
+            "description": "检索关键词（FTS5 全文检索）。"
+          },
+          "check_broken": {
+            "type": "boolean",
+            "description": "同时返回坏链检查结果（/api/broken，需先扫描过）。",
+            "default": false
+          }
+        },
+        "required": [
+          "q"
+        ]
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "photo-duplicates",
+      "description": "本地照片库重复/相似检查（photo-library，只读）：返回重复分组与库统计。用于\"照片库里有没有重复的照片\"。服务默认 http://127.0.0.1:3100（未运行时返回启动指引）。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "similar": {
+            "type": "boolean",
+            "description": "同时返回相似照片分组（/api/similar）。",
+            "default": false
+          },
+          "stats": {
+            "type": "boolean",
+            "description": "返回库统计（/api/stats）。",
+            "default": true
+          }
+        },
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "video-library-list",
+      "description": "本地视频库清单（video-library，只读）：列出已索引视频（编解码/分辨率/时长/大小）。用于\"视频库里有哪些视频，帮我列个清单\"。服务默认 http://127.0.0.1:3200（未运行时返回启动指引）。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "最多返回条数（默认 30）。",
+            "default": 30
+          }
+        },
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "privacy-audit",
+      "description": "隐私/密钥泄露审计：对指定 git 仓库目录运行 9 项只读检查（.gitignore 覆盖 / 已入库敏感文件 / env.example 占位符 / 硬编码密钥 / 绝对路径 / 真实微信号 / git 历史泄露 / 磁盘文件被忽略）。用于\"帮我审计一下当前 repo 有没有隐私泄露\"。默认扫描整个工作区（可 target 指定单仓库，--exclude-path 排除不想审计的仓库）。只读，不修改任何文件。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "要审计的 git 仓库或根目录（默认 WORKSPACE_ROOT 环境变量指向的整个工作区；不传 target 且未设置 WORKSPACE_ROOT 则报错）。传单仓库则只审计它。"
+          },
+          "exclude_path": {
+            "type": "string",
+            "description": "逗号分隔的排除仓库路径前缀（如 \"<repoA>/<subdir>,<repoB>\"）。"
+          }
+        },
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "pse-review",
+      "description": "Run the full PSE portfolio review (autogen-pse pipeline): regenerates the portfolio summary and runs a Planner/Specialist/Evaluator agent team with personal knowledge-base retrieval to produce an in-depth weekly review. Takes 2-6 minutes and calls the configured LLM. Returns the complete review report (Markdown). Use for a serious, quality-gated weekly review. [model provider: deepseek (PAID)]. This deployment uses the PAID deepseek provider, so every run requires human approval.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": true
+    },
+    {
+      "name": "pse-review-latest",
+      "description": "Read the most recent saved PSE portfolio review (full Markdown, with its absolute path). Use when the report text is no longer visible in the conversation context, or when the user asks about report details (numbers, positions, suggestions) in a later turn. Answer from the fetched text; never invent numbers.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "article-write",
+      "description": "Run the crewai-pse three-agent article pipeline (Planner/Specialist/Evaluator) to write a Chinese technical article about a project, then auto-translate to English. Takes 3-10 minutes and calls the LLM multiple times. Returns the full Chinese article (Markdown) and save paths. Use when the user asks to write / generate an article for a project. The project MUST be one from the enum (configured in crewai-pse projects.json). If the user did not specify a project, call this tool WITHOUT `project` to list the candidates, let the user pick ONE, then call again WITH `project` set. Do NOT guess or invent a project name, and NEVER loop over the enum to write multiple articles at once. CRITICAL: this tool produces EXACTLY ONE article for the SINGLE `project` given — never call it once per project, never loop over the enum, and never generate articles for multiple projects from a vague \"write an article\" request. If the user did not name a specific project, ask them to pick ONE, then call once. Only iterate across projects when the user explicitly says \"write for all / every project\". Default provider: free (default); set provider=\"deepseek\" for paid higher quality. Switching to provider=\"deepseek\" (PAID) triggers a human approval prompt — wait for the user to approve before assuming it will run; if the user rejects, do NOT retry with deepseek, explain and adjust instead. Do NOT read any files before calling this tool — all paths and configs are handled internally. If this tool returns an error (e.g. missing project fields, exit code 1), report the error message back to the user VERBATIM and ask them to fix the project config — do NOT try to locate projects.json, inspect the project directory, or run shell/fs commands yourself: the framework project lives OUTSIDE this sandbox and those reads will fail; the tool owns all file access for article writing.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "Project key from crewai-pse projects.json (read live on every call, so newly discovered projects appear immediately). Omit it (call WITHOUT `project`) to get the candidate list; once the user picks one, pass project=<key> to write that single article. Never guess or invent a project name.",
+            "enum": [
+              "alva-e2e",
+              "lume-a2a",
+              "nsbp-shop-e2e",
+              "rag-platform",
+              "solo-chat",
+              "tax-agent-platform"
+            ]
+          },
+          "publish": {
+            "type": "boolean",
+            "description": "If true, auto-publish the article to WordPress after generation.",
+            "default": false
+          },
+          "style": {
+            "type": "string",
+            "description": "Narrative style override A-F (F=engineering show-your-work). Omit for auto-rotation.",
+            "enum": [
+              "A",
+              "B",
+              "C",
+              "D",
+              "E",
+              "F"
+            ]
+          },
+          "provider": {
+            "type": "string",
+            "description": "Model provider: \"free\" (default, matches `make articles`) or \"deepseek\" (paid, higher quality, matches `make articles-paid`).",
+            "enum": [
+              "free",
+              "deepseek"
+            ],
+            "default": "free"
+          }
+        },
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "resume-tailor",
+      "description": "Run the llamaindex-pse resume-tailor pipeline (RAG + LLM) to either: (1) customize a resume for a specific Job Description (JD), or (2) recommend best-fit positions based on your experience. Takes 1-5 minutes. Returns the generated resume (Markdown) and save path. Use when the user asks to tailor/optimize a resume for a job, or asks for job/career recommendations. Default provider: free. Any non-free provider (deepseek / scnet-kimi / scnet-minimax) is PAID and triggers a human approval prompt — wait for the user to approve before assuming it will run; if rejected, do NOT retry with a paid provider. Do NOT read any files before calling this tool — all paths and configs are handled internally.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "description": "Operation mode: \"customize\" = tailor resume for a JD (requires jd_text); \"recommend\" = recommend best-fit positions (no JD needed).",
+            "enum": [
+              "customize",
+              "recommend"
+            ]
+          },
+          "jd_text": {
+            "type": "string",
+            "description": "Job Description text for customize mode. Required when mode=\"customize\". Paste the full JD content here."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Model provider: free (default), deepseek, scnet-kimi, scnet-minimax.",
+            "enum": [
+              "free",
+              "deepseek",
+              "scnet-kimi",
+              "scnet-minimax"
+            ],
+            "default": "free"
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "interview-questions",
+      "description": "Run the langgraph-pse interview-questions pipeline (Planner + Specialist + Evaluator + Verify) to generate a structured technical interview question set. Supports three modes: (1) by subject (programming language / role), (2) by Job Description (JD text), (3) by resume text. Generates 9 questions (3 easy / 3 medium / 3 hard) with anti-hallucination topic verification. Takes 1-5 minutes. Returns the generated question set (Markdown) and save path. Use when the user asks to generate interview questions, prepare for an interview, or create a quiz. Default provider: free. Switching to provider=\"deepseek\" (PAID) triggers a human approval prompt — wait for the user to approve before assuming it will run; if rejected, do NOT retry with deepseek. Do NOT read any files before calling this tool — all paths and configs are handled internally.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "description": "Generation mode: \"subject\" = by programming language/role; \"jd\" = by Job Description text; \"resume\" = by resume text.",
+            "enum": [
+              "subject",
+              "jd",
+              "resume"
+            ],
+            "default": "subject"
+          },
+          "subject": {
+            "type": "string",
+            "description": "Subject for \"subject\" mode: programming language (python/java/javascript/typescript/go/rust) or role (backend/frontend/fullstack/devops/data/ai).",
+            "enum": [
+              "python",
+              "go",
+              "java",
+              "typescript",
+              "backend",
+              "frontend",
+              "sre"
+            ],
+            "default": "python"
+          },
+          "jd_text": {
+            "type": "string",
+            "description": "Job Description text for \"jd\" mode. Required when mode=\"jd\"."
+          },
+          "resume_text": {
+            "type": "string",
+            "description": "Resume content text for \"resume\" mode. Required when mode=\"resume\"."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Model provider: free (default) or deepseek (paid, higher quality).",
+            "enum": [
+              "free",
+              "deepseek"
+            ],
+            "default": "free"
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "crm-task",
+      "description": "Run one of three langgraph-pse personal-CRM pipelines: (1) crm-qa — data quality report (duplicates, missing fields, hygiene); (2) follow-up-draft — personalized follow-up message drafts for contacts; (3) weekly-review — weekly relationship summary from CRM data. All use the PSE graph (Planner + Specialist + Evaluator + Verify) with anti-hallucination. Default provider: free (default). Requires personal-CRM backend or database to be accessible. Switching to provider=\"deepseek\" (PAID) triggers a human approval prompt — wait for the user to approve before assuming it will run; if rejected, do NOT retry with deepseek. Do NOT read any files before calling this tool.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string",
+            "description": "Which CRM task to run.",
+            "enum": [
+              "crm-qa",
+              "follow-up-draft",
+              "weekly-review"
+            ]
+          },
+          "provider": {
+            "type": "string",
+            "description": "Model provider: free (default) or deepseek (paid, higher quality).",
+            "enum": [
+              "free",
+              "deepseek"
+            ],
+            "default": "free"
+          },
+          "api_base_url": {
+            "type": "string",
+            "description": "CRM backend API base URL (for crm-qa task only). Defaults to CRM_API_BASE_URL env or http://127.0.0.1:8000."
+          },
+          "db_path": {
+            "type": "string",
+            "description": "Path to CRM SQLite database (for follow-up-draft and weekly-review tasks). Defaults to CRM_DB_PATH env or the task's default DB path."
+          }
+        },
+        "required": [
+          "task"
+        ]
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "build-juejin",
+      "description": "构建掘金副本：调用 wordpress-tools 的 `make build-juejin`，遍历 articles/zh 为「还没有 articles/juejin 副本」的文章生成掘金版 md（正文取自 zh 干净源，保留 juejin frontmatter/footer/FAQ），不调掘金接口、不需要 cookie。建完再调用 juejin-draft 建草稿。⚠️ 只对 articles/zh 里的文章有效；仍留在 pse/zh 的稿需先发布+归档（make archive）才会被覆盖。",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "juejin-draft",
+      "description": "建掘金草稿：调用 wordpress-tools 的 `make juejin-draft`，为下一篇未发布文章创建掘金草稿并写回 juejin_draft_id。每次只处理一篇。需要 wordpress-tools/.env 中的掘金 cookie。⚠️ 每次调用本工具自动建队列中的下一篇；要连续建多篇就重复调用本工具，不要自己用 shell 跑 node 命令。",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "juejin-publish",
+      "description": "掘金草稿上线（可选步骤）：调用 wordpress-tools 的 `make juejin-publish`，把已建草稿（juejin_draft_id）的下一篇点发布并写回 juejin_id。⚠️ 当前口径「草稿=已发」（同公众号）：make juejin-draft 建完草稿即视为已发，本步骤仅在你希望显式点上线时才需要；未发清单不依赖它。需要掘金 cookie。⚠️ 每次调用自动发队列中下一篇；连续发多篇就重复调用。",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "wechat-draft",
+      "description": "建微信公众号草稿：调用 wordpress-tools 的 `make wechat-draft`，为下一篇未建草稿的文章创建公众号草稿箱草稿并写回 wechat_draft_id。每次只处理一篇。必须在本机 Mac 运行（微信校验 IP），需要 .env 中的 appid/appsecret。工作流语义：建进草稿箱即视为已群发，建完 life-dash 未发清单会自动把它标为「已群发 ✓」、队列缩短（自动同步）；若某篇没建草稿但确认已群发，把 base 加进 wechat-sent.json 白名单再 make rescan。若提示「没有待发布（全部已有 wechat_draft_id）」，说明主清单里所有需要建草稿的文章都已建好，无需重复调用。",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "sf-pw-publish",
+      "description": "思否发布（Playwright 真浏览器版）：调用 wordpress-tools 的 `make sf-pw-publish`，启动浏览器登录思否并发布下一篇未发布文章，写回 sf_id。每次只发一篇。需要 Chrome 已登录思否（或设置 SF_USER_DATA_DIR）。⚠️ 每次调用本工具自动发队列中的下一篇；要连续发多篇就重复调用本工具，不要自己用 shell 跑 node 命令（cwd 不对会找不到模块）。",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "article-validate",
+      "description": "⚠️ 此工具仅用于【校验】文章正确性，不负责发布；当用户想发布文章或查看「待发布清单」时，必须改用 article-publish（不传 project 即可列出待发布清单，返回的项目列表与本工具相同）。检查 articles/pse/zh 和 en 下的文章：文件存在性、frontmatter 完整性（title/date/slug/categories/tags/description/excerpt）、正文有效性（长度/标题数/非计划口吻）、思维链泄漏检测、FAQ 区块存在性与中英文数量一致、slug 命名规范、代码块闭合、日期格式。返回通过/错误/警告清单。 The project MUST be one from the `project` enum (read it from the tool schema — do NOT call this tool to discover choices). If the user did not specify a project, ASK the user to pick one of the enum values, then call with `project` set. Never guess or invent a project name. 不传 project 会列出待校验队列清单。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "Project key from crewai-pse projects.json（每次调用实时读取，新加入队列的项目会即时出现）。不传 project 会列出待处理队列清单供用户选择；用户指定后传 project=<key 或 编号>。",
+            "enum": [
+              "alva-e2e",
+              "legacy",
+              "lume-a2a",
+              "nsbp-shop-e2e",
+              "rag-platform",
+              "solo-chat",
+              "tax-agent-platform"
+            ]
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "安全闸门。必须显式设为 true 才会真正 POST 到 WordPress；缺省或 false 只做只读预览（跑校验、打印将执行的操作，但不发布）。仅在用户已明确点名这篇 project 后才可设 true；禁止对同一队列批量设 true。",
+            "default": false
+          }
+        },
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "article-publish",
+      "description": "发布已生成的文章到 WordPress。发布前自动运行 article-validate 校验，有错误则阻止发布并提示修复。调用 crewai-pse 的 `make publish P=<project>`，把待发布队列中的文章发布到线上并写回 wp_id/link。需要 .env 中的 WordPress 凭据。⚠️ 这是【发布】工具：调用时不传 project 会列出当前待发布队列中的所有文章供用户选择，用户选定后再带 project 调用即可发布；不要改用 article-discover（那是用于发现【新】项目以撰写文章，不负责发布）。 The project MUST be one from the `project` enum (read it from the tool schema — do NOT call this tool to discover choices). If the user did not specify a project, ASK the user to pick one of the enum values, then call with `project` set. Never guess or invent a project name. This parameter is REQUIRED.🛑 安全闸门：本工具默认【只预览、不真正发布】。只有 `confirm` 参数显式设为 true 时才会 POST 到 WordPress。且一次只能发布用户【明确点名】的那一篇 project——绝对禁止对队列里的多篇文章循环调用本工具、或在一次回复里批量发布。未等用户明确指定 project 前，不要设 confirm=true。若用户只泛泛地说「发布一篇文章」却没给出具体 project，你必须先停下来问清楚要发布哪一篇，绝不可自行从清单里挑一个并设 confirm=true。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "Project key from crewai-pse projects.json（每次调用实时读取，新加入队列的项目会即时出现）。不传 project 会列出待处理队列清单供用户选择；用户指定后传 project=<key 或 编号>。",
+            "enum": [
+              "alva-e2e",
+              "legacy",
+              "lume-a2a",
+              "nsbp-shop-e2e",
+              "rag-platform",
+              "solo-chat",
+              "tax-agent-platform"
+            ]
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "安全闸门。必须显式设为 true 才会真正 POST 到 WordPress；缺省或 false 只做只读预览（跑校验、打印将执行的操作，但不发布）。仅在用户已明确点名这篇 project 后才可设 true；禁止对同一队列批量设 true。",
+            "default": false
+          }
+        },
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "article-archive",
+      "description": "归档已发布文章到 wordpress-tools 并重建各平台副本。调用 crewai-pse 的 `make archive P=<project>`，把已发布文章归档、重建 juejin/segmentfault/wechat 草稿副本、更新关键词索引、清理源码镜像缓存。注意：归档 ≠ 发布——本工具不 POST 到 WordPress，只整理本地/平台副本。⚠️ 这是【归档】工具：调用时不传 project 会列出当前可归档队列中的所有文章供用户选择，用户选定后再带 project 调用即可归档；不要改用 article-discover（那是用于发现【新】项目以撰写文章，不负责归档）。 The project MUST be one from the `project` enum (read it from the tool schema — do NOT call this tool to discover choices). If the user did not specify a project, ASK the user to pick one of the enum values, then call with `project` set. Never guess or invent a project name.🛑 安全闸门：本工具默认【只预览、不真正归档】。只有 `confirm` 参数显式设为 true 时才会执行 `make archive`。且一次只能归档用户【明确点名】的那一篇 project——绝对禁止对队列里的多篇文章循环调用本工具、或在一次回复里批量归档。未等用户明确指定 project 前，不要设 confirm=true。若用户只泛泛地说「归档一篇文章」却没给出具体 project，你必须先停下来问清楚要归档哪一篇，绝不可自行从清单里挑一个并设 confirm=true。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "Project key from crewai-pse projects.json（每次调用实时读取，新加入队列的项目会即时出现）。不传 project 会列出待处理队列清单供用户选择；用户指定后传 project=<key 或 编号>。",
+            "enum": [
+              "alva-e2e",
+              "legacy",
+              "lume-a2a",
+              "nsbp-shop-e2e",
+              "rag-platform",
+              "solo-chat",
+              "tax-agent-platform"
+            ]
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "安全闸门。必须显式设为 true 才会真正 POST 到 WordPress；缺省或 false 只做只读预览（跑校验、打印将执行的操作，但不发布）。仅在用户已明确点名这篇 project 后才可设 true；禁止对同一队列批量设 true。",
+            "default": false
+          }
+        },
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "article-discover",
+      "description": "扫描大项目（工作区）下所有有 github remote 的子项目，对比已有 projects.json，输出建议新增的项目列表（含 desc/highlights/source_dir 自动生成）。用于发现可写技术文章的新项目。默认扫出后即写入 projects.json；传 add=false 仅 dry-run 输出建议不写入。⚠️ 此工具仅用于发现【尚未撰写】的新项目以生成文章，不负责发布；要发布已生成的待发文章请改用 article-publish（不传 project 即可列出待发布清单）。返回值包含 projects.json 的绝对路径、当前已有项目清单、以及 discover 的扫描输出——无需再另行 read-file 查找 projects.json（路径见返回值首行）。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "add": {
+            "type": "boolean",
+            "description": "If true (default), write discovered new projects into projects.json directly. Set false for a dry-run that only prints suggestions.",
+            "default": true
+          }
+        },
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "hot-news",
+      "description": "Run the llamaindex-pse hot-news pipeline (Planner + Specialist + Evaluator + Verify) to generate compliant social-media copy for a hot topic. The pipeline builds a RAG index over the provided news directory (grounding source) so the copy is fact-anchored, then runs a deterministic compliance verify_fn every round (banned words by category / platform format limits / mandatory \"AI 辅助创作\" label / factual-claim-vs-news cross-check). Semantic edge cases go to the LLM evaluator (first round only). Supports Xiaohongshu / Douyin / Zhihu / Toutiao, and categories tech_ai (default, most lenient) through finance/medical (strictest). Returns the generated Markdown copy and save path. Use when the user asks to draft a Xiaohongshu/Douyin post about a trending topic. Default provider: the gateway configured in the PSE framework (free, no approval). Any explicitly chosen non-default provider (deepseek / scnet-kimi / scnet-minimax) is PAID and triggers a human approval prompt — wait for the user to approve before assuming it will run; if rejected, do NOT retry with a paid provider. Do NOT read any files before calling this tool — all paths and configs are handled internally.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string",
+            "description": "热点主题（必填），如「AI 生成内容新规落地」。"
+          },
+          "news_dir": {
+            "type": "string",
+            "description": "已抓取新闻目录的绝对路径（RAG grounding 源）。不传时默认使用 hot-news-fetch 的快照目录 （tasks/hot-news/news）；仅当该目录也不存在时才降级为纯 topic 生成（无事实对照）。"
+          },
+          "platform": {
+            "type": "string",
+            "description": "目标发布平台。",
+            "enum": [
+              "xiaohongshu",
+              "douyin",
+              "zhihu",
+              "toutiao"
+            ],
+            "default": "xiaohongshu"
+          },
+          "category": {
+            "type": "string",
+            "description": "内容品类，决定违禁词表松紧（tech_ai 最宽松；finance/medical 最严）。",
+            "enum": [
+              "tech_ai",
+              "beauty",
+              "food",
+              "education",
+              "finance",
+              "medical",
+              "ecommerce"
+            ],
+            "default": "tech_ai"
+          },
+          "provider": {
+            "type": "string",
+            "description": "LLM 网关。不传则使用 PSE 框架配置的默认网关（免费，无需审批）；显式指定 deepseek / scnet-kimi / scnet-minimax 为付费网关，需人工审批。",
+            "enum": [
+              "deepseek",
+              "free",
+              "scnet-kimi",
+              "scnet-minimax"
+            ],
+            "default": "free"
+          }
+        },
+        "required": [
+          "topic"
+        ]
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "hot-news-fetch",
+      "description": "抓取多平台热点新闻（微博热搜 weibo / 36氪 kr36 / 少数派 sspai / 量子位 qbitai / InfoQ infoq）落盘为 Markdown，作为 hot-news 生成管线的事实 grounding 源（RAG 语料）。这是热点营销流水线的第一步：先用本工具刷新素材，再 hot-news-topics 选话题 → hot-news 生成 → hot-news-check 校验。只写 tasks/hot-news/news/ 快照目录，不改任何其他文件；无需审批。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "sources": {
+            "type": "string",
+            "description": "逗号分隔的源，默认全部；可选：weibo, kr36, sspai, qbitai, infoq。tech_ai 品类建议优先 qbitai,infoq（AI 命中率远高于微博热搜）。",
+            "default": "weibo,kr36,sspai,qbitai,infoq"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "每源保留条数（默认 30）。",
+            "default": 30,
+            "minimum": 1,
+            "maximum": 200
+          },
+          "max_age_days": {
+            "type": "integer",
+            "description": "仅保留 N 天内的热点（0=不过滤，默认 2）；微博热榜无发布时间不应用。",
+            "default": 2,
+            "minimum": 0
+          },
+          "clean": {
+            "type": "boolean",
+            "description": "重写前清空 out 目录（干净快照，仅在抓到数据时才清空，避免全失败误删）。",
+            "default": false
+          },
+          "use_proxy": {
+            "type": "boolean",
+            "description": "走系统代理（默认直连，避开代理对公开域名的 TLS 干扰）。",
+            "default": false
+          },
+          "out": {
+            "type": "string",
+            "description": "落盘目录（默认 /workspace/frameworks/llamaindex-pse/tasks/hot-news/news）。"
+          }
+        },
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "hot-news-topics",
+      "description": "列出当前可写的话题候选：微博热搜（按热度降序）+ qbitai/infoq AI 科技源（按发布时间降序）。AI 相关选题优先看 AI 科技源候选（qbitai/infoq）。数据来自已抓取的 news/ 快照（需先跑 hot-news-fetch 刷新）；只读，不写任何文件，无需审批。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "news_dir": {
+            "type": "string",
+            "description": "新闻快照目录（默认 /workspace/frameworks/llamaindex-pse/tasks/hot-news/news）。"
+          }
+        },
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "hot-news-check",
+      "description": "离线校验一篇热点稿：文章字段（标题/正文/封面/来源标注）+ 平台限值 + 违禁词 + AI 声明要求。不联网、不发布，发布到小红书/知乎/头条前先跑一遍。不传 article 时自动使用 articles/ 里最新的一篇成稿（优先匹配平台）。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "platform": {
+            "type": "string",
+            "description": "目标发布平台（决定限值/标签结构）。",
+            "enum": [
+              "xiaohongshu",
+              "zhihu",
+              "toutiao"
+            ],
+            "default": "xiaohongshu"
+          },
+          "article": {
+            "type": "string",
+            "description": "待校验文章 .md 绝对路径；缺省自动取 articles/ 里最新一篇（优先匹配 platform）。"
+          }
+        },
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "hot-news-publish",
+      "description": "把一篇热点稿用 Playwright 真浏览器填进发布编辑器（小红书 xiaohongshu / 知乎 zhihu / 今日头条 toutiao）：自动生成品牌多图/封面、填标题/正文/话题，尽力勾选 AI 创作声明，然后**停在编辑器**由用户人工核对并自己点发布。绝不自动发布。需要先完成一次平台登录（publish_<platform>.py login，登录态持久化在 publish/storage/）。不传 article 时自动使用 articles/ 里最新的一篇成稿（优先匹配平台）。此工具会驱动真实浏览器并操作账号，需要人工审批。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "platform": {
+            "type": "string",
+            "description": "目标发布平台。",
+            "enum": [
+              "xiaohongshu",
+              "zhihu",
+              "toutiao"
+            ],
+            "default": "xiaohongshu"
+          },
+          "article": {
+            "type": "string",
+            "description": "待发布文章 .md 绝对路径；缺省自动取 articles/ 里最新一篇（优先匹配 platform）。"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "预演：填稿到编辑器后即停止（默认行为即停在编辑器，此参数用于更保守的预览）。",
+            "default": false
+          },
+          "save_as_draft": {
+            "type": "boolean",
+            "description": "仅小红书：点「发布笔记」走官方 AI 声明拦截自动存草稿（默认不点，停在编辑器交人工）。",
+            "default": false
+          }
+        },
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": true
+    },
+    {
+      "name": "dev-stats",
+      "description": "开发者数据统计（dev-stats 项目）：查掘金/思否文章阅读数据、汇总双平台传播对比、巡检各仓库 GitHub Actions CI 状态、导出仓库 clone 统计 CSV。通过 make 目标执行，全部为只读查询或本地文件导出，不改依赖、不改代码。请勿用 shell 直接访问项目目录，所有查询一律走本工具；失败时先读返回的错误信息再决定动作，不要盲目重试。导出 CSV 后不要再用 read-file / shell 读取该文件：它位于 dev-stats 项目目录内、已被 .gitignore、可能较大，且 read-file 的相对路径以 harness 工作区为基准、找不到它；直接基于本工具返回的导出结论汇报即可。回答里提到预览 HTML 时，必须渲染成完整 URL 的 Markdown 链接方便一键打开：逐字引用工具结果里「预览链接：」后的完整地址（形如 http://127.0.0.1:<端口>/api/raw/stats-preview.html），如 [打开 CSV 预览](http://...)。链接必须以 http:// 开头且整条复制，不要自己改写或拼接路径——相对路径 /api/raw 在前端不可点击，即使本会话历史消息里有旧格式也不要模仿；拿不准就直接告诉用户「点击上方工具卡片中的预览按钮」。工具结果末尾附的【仓库热度排名】清单是标准化排名：仓库名/排位/数字一律以此清单为准——上面的 Rich 表格在窄终端会被拆成竖排字符、容易读错（如把 tsm-hub 读成 spring-m-hub），不要根据表格文字拼仓库名。输出末尾自带「文章链接」清单（每篇的原文 URL）；回答涉及具体文章时，请把标题渲染成 Markdown 链接指向该 URL，方便直接跳转查看。铁律：回答中的仓库名、排名、数值必须逐字取自本工具的实际输出，禁止编造、改写或「补充」任何仓库存在与数字；表格很长时只引用排名靠前的几行，宁少勿错。\nreport：汇总掘金 + 思否文章数据，按母文章合并对比（默认 --sort daily 日均阅读）。思否默认禁用或拉取失败时自动降级为仅掘金并附说明，不会整体报错。\njuejin：掘金文章阅读/点赞/评论（默认 --sort daily，可 ARGS 覆盖）。\nsegmentfault：思否文章阅读/访客/点赞/收藏/评论（默认 --sort daily，可 ARGS 覆盖）。思否抓取默认禁用（需 .env 设置 SEGMENTFAULT_ENABLED=true）；未启用时只返回提示、无数据，属正常现象，不要重试。\nci：CI 巡检（推荐）：只输出「CI 巡检小结」——失败仓库 + workflow + 失败步骤 + 报错注解，跳过流量采集与仓库大表，约 50 秒。问「哪些仓库 CI 挂了」时优先用这个。\nactions：巡检各仓库 CI 状态并附带完整仓库统计大表（等价 make actions：--actions --no-forks --sort updated --exclude wildsKick,king-power,skeleton-ssr，默认排除 fork 与老仓噪音、按最近推送排序）。注意：管道输出里表格的 CI 列会被挤没，只要「哪些挂了」的结论请改用 target=ci。\ncsv：导出仓库公开统计到 output/stats.csv（等价 make csv：--sort clones --detail --community --activity --no-traffic）。--no-traffic 不采 clone/views 流量所以快（约 1-2 分钟），同时生成 stats-preview.html；不含流量列，只适合公开维度分析，热度/clone 排名必须用 csv-traffic。\ncsv-traffic：导出含 clone/views 流量的完整统计（等价 make csv-traffic：= csv 目标 + 流量采集 + --include-traffic，约 4-5 分钟）。问「最近两周哪个仓库 clone 最多 / 热度最高 / 传播数据」时必须用这个——csv 目标不含流量列，拿它回答热度问题必然无数据或导致编造。\nrun：透传运行 dev-stats CLI（等价 make run ARGS=...），用于上面的目标覆盖不到的参数组合。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "要执行的 make 目标。",
+            "enum": [
+              "report",
+              "juejin",
+              "segmentfault",
+              "ci",
+              "actions",
+              "csv",
+              "csv-traffic",
+              "run"
+            ],
+            "default": "report"
+          },
+          "args": {
+            "type": "string",
+            "description": "透传给 make 的 ARGS 变量（如 \"--sort views --limit 5\" 或 \"--limit 20\"）。各目标的默认参数已内置，仅在需要换排序/条数/过滤时才传。"
+          }
+        },
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "system-info",
+      "description": "Return runtime diagnostics: memory usage (RSS, heap), CPU load, process uptime, and platform info. Optionally filter to a section (memory, cpu, platform, full).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "section": {
+            "type": "string",
+            "description": "Which section to return: memory, cpu, platform, or full (default)."
+          }
+        }
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
+      "name": "make",
+      "description": "Run make targets in a host project. The workspace repo root is bind-mounted read-write at /workspace, so this executes `make -C <dir> [target] [KEY=VALUE...]` against real host files with a 5-minute timeout. Call target 'help' first to discover a project's targets (e.g. /workspace/<tools-dir>, /workspace/frameworks/autogen-pse). Targets that need docker-in-container or a GUI will fail visibly.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "dir": {
+            "type": "string",
+            "description": "Project directory under /workspace, e.g. /workspace/<tools-dir>"
+          },
+          "target": {
+            "type": "string",
+            "description": "Make target to run; omit for the default goal; use 'help' to list targets"
+          },
+          "args": {
+            "type": "string",
+            "description": "Extra make variables in KEY=VALUE form, e.g. 'PORT=3100'"
+          }
+        },
+        "required": [
+          "dir"
+        ]
+      },
+      "server": "builtin",
+      "needsApproval": true
+    }
+  ]
+}

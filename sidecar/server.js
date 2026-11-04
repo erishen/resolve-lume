@@ -12,10 +12,41 @@ const http = require('http')
 const fs = require('fs')
 const path = require('path')
 const { URL } = require('url')
+
+// Host-mode env bootstrap: read repo-root .env and inject ONLY whitelisted
+// business vars into process.env. Must run BEFORE any `const X = process.env.Y`
+// below. Silent no-op when .env is absent (container mode: env comes from
+// compose/entrypoint). Already-set ambient env wins over .env (start-host.sh
+// explicit values take precedence).
+try {
+  const { loadEnvFile, whitelist } = require('./envloader')
+  loadEnvFile(path.join(__dirname, '..', '.env'), whitelist)
+} catch {
+  // .env missing/unreadable — rely on ambient env (container entrypoint).
+}
+
 const store = require('./store')
 const agent = require('./agent')
+const builtin = require('./builtin-exec')
+const { isSensitivePath, tokenMatches, MAX_PREVIEW_BYTES } = require('./security')
 
-const PORT = Number(process.env.PORT || 3000)
+// Guard against a stray PORT=0 / non-numeric value in the environment: Node
+// would bind an ephemeral port and every nginx proxy would silently 502.
+const PORT = Number(process.env.PORT) > 0 ? Number(process.env.PORT) : 3000
+// Bind loopback by default: this process can run shell commands and write host
+// files, so a bare `node server.js` must not be reachable from the network.
+// Inside compose the service sets HOST=0.0.0.0 because the port is
+// only exposed on the compose network (frontend -> sidecar:3000).
+const HOST = process.env.HOST || '127.0.0.1'
+// Shared secret injected by the frontend proxy on /api. Fail closed: this
+// process can execute shell, so "empty token = no auth" is NOT a safe default
+// (it used to be, and the source tree even shipped a public fallback value).
+// Frontend, backend bridge and this sidecar all read the same .env value.
+const SIDECAR_TOKEN = process.env.SIDECAR_TOKEN || ''
+if (!SIDECAR_TOKEN) {
+  console.error('[sidecar] FATAL: SIDECAR_TOKEN is not set. Add a random value to .env (openssl rand -hex 32); see .env.example.')
+  process.exit(1)
+}
 const SOULS_DIR = process.env.PSE_SOULS_DIR || '/app/souls'
 const FS_ROOTS = (process.env.FS_ROOTS || '/app/souls,/app/lume-tools')
   .split(',')
@@ -30,11 +61,30 @@ function send(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json' })
   res.end(body)
 }
+// Cap request bodies: this API writes host files and drives an LLM, so an
+// unbounded body is both a memory DoS and an easy way to wedge the process.
+const MAX_BODY = 10 * 1024 * 1024
 function readBody(req) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const chunks = []
-    req.on('data', (c) => chunks.push(c))
+    let size = 0
+    let settled = false
+    req.on('data', (c) => {
+      if (settled) return
+      size += c.length
+      if (size > MAX_BODY) {
+        settled = true
+        const err = new Error('request body too large')
+        err.statusCode = 413
+        req.destroy()
+        reject(err)
+        return
+      }
+      chunks.push(c)
+    })
     req.on('end', () => {
+      if (settled) return
+      settled = true
       const raw = Buffer.concat(chunks).toString('utf8')
       if (!raw) return resolve({})
       try {
@@ -43,18 +93,76 @@ function readBody(req) {
         resolve({})
       }
     })
+    req.on('error', (err) => {
+      if (settled) return
+      settled = true
+      reject(err)
+    })
   })
 }
 function uid(prefix) {
   return (prefix || '') + Math.random().toString(36).slice(2, 10)
 }
-function isInsideRoot(abs, roots) {
-  return roots.some((r) => abs === r || abs.startsWith(r + path.sep))
+// Resolve symlinks before containment checks: a link placed inside a read root
+// must not become a way to read/write outside it.
+function realOrSelf(p) {
+  try {
+    return fs.realpathSync(p)
+  } catch {
+    try {
+      return path.join(fs.realpathSync(path.dirname(p)), path.basename(p))
+    } catch {
+      return p
+    }
+  }
+}
+const REAL_FS_ROOTS = FS_ROOTS.map(realOrSelf)
+function isInsideRoot(abs) {
+  const real = realOrSelf(abs)
+  return REAL_FS_ROOTS.some((r) => real === r || real.startsWith(r + path.sep))
 }
 
+// Shared guard for /api/file and /api/raw. Returns the absolute path, or null
+// after having written the error response. Containment alone is NOT enough:
+// FS_ROOTS includes the whole work/ tree, which also contains this repo's own
+// .env — so key material must be rejected by name as well as by location.
+function guardedFilePath(res, fp) {
+  if (!fp) {
+    send(res, 400, { error: 'missing path' })
+    return null
+  }
+  const abs = path.resolve(fp)
+  if (!isInsideRoot(abs)) {
+    send(res, 403, { error: 'path outside read roots' })
+    return null
+  }
+  if (isSensitivePath(abs) || isSensitivePath(realOrSelf(abs))) {
+    send(res, 403, { error: 'sensitive file is blocked (.env / keys / credentials)' })
+    return null
+  }
+  let st
+  try {
+    st = fs.statSync(abs)
+  } catch {
+    send(res, 404, { error: 'file not found' })
+    return null
+  }
+  if (!st.isFile()) {
+    send(res, 400, { error: 'not a regular file' })
+    return null
+  }
+  if (st.size > MAX_PREVIEW_BYTES) {
+    send(res, 413, { error: 'file too large for preview' })
+    return null
+  }
+  return abs
+}
+
+// In-flight upstream requests for running jobs, so /cancel can abort the LLM
+// stream instead of letting it burn tokens until the end.
+const activeRuns = new Map()
+
 // ---------- per-collection accessors ----------
-const jobs = () => store.read('jobs', {})
-const saveJobs = (j) => store.write('jobs', j)
 const sessions = () => store.read('sessions', {})
 const saveSessions = (s) => store.write('sessions', s)
 const memory = () => store.read('memory', { items: [] })
@@ -63,6 +171,251 @@ const pseState = () => store.read('pse', { enabled: true })
 const savePse = (p) => store.write('pse', p)
 const mcpState = () => store.read('mcp', { servers: [] })
 const saveMcp = (m) => store.write('mcp', m)
+
+// Sync the MCP registry with the bundled mcp-servers.json on every startup, so
+// the UI reflects the servers agent-httpd actually loads (e.g. lume-tools +
+// the npx-based fs/fetch/git/memory/think). Declared servers are always present
+// with their static fields; runtime-added servers (not in the config) are kept,
+// and previously backfilled status/toolCount/tools are preserved across restarts.
+function seedMcpRegistry() {
+  const SEED_PATH = process.env.MCP_SEED_FILE || '/app/mcp-servers.json'
+  let declared = []
+  try {
+    const seed = JSON.parse(fs.readFileSync(SEED_PATH, 'utf8'))
+    if (Array.isArray(seed)) declared = seed
+  } catch {
+    /* no seed file — keep whatever is in the store */
+  }
+  const existing = mcpState().servers || []
+  const byId = new Map(existing.map((s) => [s.id, s]))
+  const declaredIds = new Set(declared.map((s) => s.id))
+  const merged = declared.map((s) => {
+    const prev = byId.get(s.id) || {}
+    return {
+      id: s.id,
+      transport: s.transport || 'stdio',
+      command: s.command,
+      args: s.args,
+      url: s.url,
+      approval: s.approval !== false,
+      status: prev.status || 'connected',
+      toolCount: prev.toolCount || 0,
+      tools: prev.tools || [],
+    }
+  })
+  // preserve runtime-added servers that are not in the declared config
+  for (const s of existing) {
+    if (!declaredIds.has(s.id)) merged.push(s)
+  }
+  saveMcp({ servers: merged })
+  console.log(`[sidecar] synced ${merged.length} MCP server(s) (${declared.length} declared) from ${SEED_PATH}`)
+}
+
+// ---------- HTTP MCP client (streamableHttp / SSE) ----------
+// The lume-family MCP bridges (mcp-fs / mcp-memory / mcp-think) are supergateway
+// instances that wrap a node stdio server and expose it as streamableHttp on :8000.
+// agent-httpd's C MCP client only supports stdio (and can't handshake node servers),
+// so the sidecar — being a Node process — speaks HTTP MCP to them directly and
+// registers them in the registry the frontend reads.
+function probeHttpMcp(url) {
+  return new Promise((resolve) => {
+    let u
+    try {
+      u = new URL(url)
+    } catch {
+      return resolve({ ok: false, error: 'bad url' })
+    }
+    const headers = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+    }
+    function call(method, params, sid) {
+      return new Promise((res, rej) => {
+        const body = JSON.stringify({
+          jsonrpc: '2.0',
+          id: Math.floor(Math.random() * 1e6),
+          method,
+          params,
+        })
+        const req = http.request(
+          {
+            host: u.hostname,
+            port: u.port || 80,
+            path: u.pathname || '/',
+            method: 'POST',
+            headers: { ...headers, ...(sid ? { 'mcp-session-id': sid } : {}) },
+            timeout: 8000,
+          },
+          (resp) => {
+            const outSid = resp.headers['mcp-session-id']
+            let buf = ''
+            resp.on('data', (c) => (buf += c))
+            resp.on('end', () => {
+              let txt = buf
+              const ct = resp.headers['content-type'] || ''
+              if (ct.includes('text/event-stream')) {
+                txt = buf
+                  .split('\n')
+                  .filter((l) => l.startsWith('data:'))
+                  .map((l) => l.slice(5).trim())
+                  .join('')
+              }
+              if (!txt.trim()) return res({ sid: outSid || sid, result: null })
+              try {
+                res({ sid: outSid || sid, result: JSON.parse(txt).result })
+              } catch (e) {
+                rej(e)
+              }
+            })
+          }
+        )
+        req.on('error', rej)
+        req.on('timeout', () => req.destroy(new Error('timeout')))
+        req.write(body)
+        req.end()
+      })
+    }
+    ;(async () => {
+      const init = await call('initialize', {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'resolve-lume-sidecar', version: '1.0' },
+      })
+      const sid = init.sid
+      // notifications/initialized is a notification — fire-and-forget, no response.
+      const nb = JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })
+      const nr = http.request(
+        { host: u.hostname, port: u.port || 80, path: u.pathname || '/', method: 'POST', headers: { ...headers, 'mcp-session-id': sid } },
+        () => {}
+      )
+      nr.on('error', () => {})
+      nr.write(nb)
+      nr.end()
+      await new Promise((r) => setTimeout(r, 200))
+      const tl = await call('tools/list', {}, sid)
+      const tools =
+        tl.result && tl.result.tools
+          ? tl.result.tools.map((t) => ({ name: t.name, description: t.description || '' }))
+          : []
+      resolve({ ok: true, tools })
+    })().catch((e) => resolve({ ok: false, error: e.message }))
+  })
+}
+
+// Probe each HTTP MCP server and backfill its status/toolCount/tools. Retry while
+// the bridges are still warming up (they share the tsm-hub network with us).
+let httpRefreshAttempts = 0
+function refreshHttpMcpServers() {
+  const m0 = mcpState()
+  const targets = (m0.servers || []).filter((s) => s.transport === 'http' && s.url)
+  if (targets.length === 0) return
+  const results = {}
+  let pending = targets.length
+  let anyOk = false
+  const finish = () => {
+    if (--pending > 0) return
+    // Re-read the store fresh so we never clobber the stdio backfill (which may
+    // have saved in the meantime) and only patch the HTTP servers we own.
+    const m = mcpState()
+    for (const s of m.servers) {
+      const r = results[s.id]
+      if (!r) continue
+      s.status = r.ok ? 'connected' : 'error'
+      s.toolCount = r.ok ? r.tools.length : 0
+      s.tools = r.ok ? r.tools.map((t) => t.name) : []
+      s.toolDetails = r.ok ? Object.fromEntries(r.tools.map((t) => [t.name, t.description || ''])) : {}
+      if (r.ok) anyOk = true
+    }
+    saveMcp(m)
+    if (anyOk) {
+      console.log(`[sidecar] refreshed ${targets.length} HTTP MCP server(s)`)
+    } else if (httpRefreshAttempts++ < 20) {
+      setTimeout(refreshHttpMcpServers, 3000)
+    } else {
+      console.log(`[sidecar] HTTP MCP servers unreachable after retries`)
+    }
+  }
+  for (const s of targets) {
+    probeHttpMcp(s.url)
+      .then((r) => {
+        results[s.id] = r
+      })
+      .catch((e) => {
+        results[s.id] = { ok: false, error: e.message }
+      })
+      .finally(finish)
+  }
+}
+
+// ---------- tools: merge backend built-ins + MCP-bridge tools ----------
+// resolve-studio's /api/tools returns a FLAT list (built-in tools + MCP tools
+// like `fs:read_file`). agent-httpd only knows its own lume-tools bridge, so we
+// fetch those from the backend and merge in the tools we discovered from the
+// HTTP MCP bridges (fs / memory / think) to mirror that flat shape.
+function handleToolsList(res) {
+  const finish = (tools) => send(res, 200, { tools })
+  let base = []
+  const u = new URL(AGENT_URL)
+  const req = http.request(
+    { method: 'GET', hostname: u.hostname, port: u.port || 80, path: '/react/api/tools', timeout: 5000 },
+    (resp) => {
+      let body = ''
+      resp.on('data', (c) => (body += c))
+      resp.on('end', () => {
+        try {
+          const data = JSON.parse(body)
+          // 去掉代理层回灌进来的镜像条目。lume-tools/sidecar_ro.lume 把本仓的 builtin
+          // 又包了一层 stdio MCP，agent 会把这些能力以 sidecar__<name> 报回来；而下面
+          // 紧接着会追加 BUILTIN_TOOLS 的同名权威条目。不去重，面板就会从 47 涨到 68
+          // 并出现同义双条目（read-file 与 sidecar__read-file 并存）。
+          // 判据用名字前缀/server id 而不是写死条数，这样以后增减 --only 名单都不用改这里。
+          base = (data.tools || [])
+            .filter((t) => !/^sidecar__/.test(t.name || '') && (t.server || '') !== 'sidecar')
+            .map((t) => ({
+              name: t.name,
+              description: t.description || t.desc || '',
+              server: t.server || 'lume-tools',
+              parameters: t.parameters || {},
+              fromMcp: false,
+            }))
+        } catch {
+          /* backend returned non-JSON */
+        }
+        const reg = mcpState()
+        const merged = [...base]
+        for (const s of reg.servers || []) {
+          // Only the HTTP bridges are "MCP tools" here — the stdio lume-tools
+          // bridge is already surfaced by the backend as built-ins.
+          if (s.transport !== 'http' || !s.tools || !s.tools.length) continue
+          const details = s.toolDetails || {}
+          for (const tool of s.tools) {
+            merged.push({
+              name: `${s.id}:${tool}`,
+              description: details[tool] || `${s.id} MCP tool`,
+              server: s.id,
+              parameters: {},
+              fromMcp: true,
+            })
+          }
+        }
+        for (const t of builtin.BUILTIN_TOOLS) {
+          merged.push({
+            name: t.name,
+            description: t.description || '',
+            server: t.server || 'builtin',
+            parameters: t.parameters || {},
+            needsApproval: !!t.needsApproval,
+            fromMcp: false,
+          })
+        }
+        finish(merged)
+      })
+    }
+  )
+  req.on('error', () => finish(base))
+  req.on('timeout', () => req.destroy())
+  req.end()
+}
 
 // ---------- tasks catalog (static; lume has no task registry of its own) ----------
 const TASKS = [
@@ -110,11 +463,17 @@ function scanSkills() {
 
 // ---------- jobs: background PSE/chat run with event log ----------
 function startJobRun(id, input) {
-  const j = jobs()[id]
+  const j = store.job.get(id)
   if (!j) return
   const usePse = input.taskId === 'pse-review' || j.taskId === 'pse-review'
   const backendPath = usePse ? '/react/api/pse' : '/react/api/chat'
-  const body = JSON.stringify({ message: input.prompt, history: [] })
+  // `history` carries the prior transcript on /resume; `instruction` is the
+  // optional steer the UI collected, appended to the original prompt.
+  const history = Array.isArray(input.history) ? input.history : []
+  const prompt = input.instruction
+    ? `${input.prompt}\n\n补充要求：${input.instruction}`
+    : input.prompt
+  const body = JSON.stringify({ message: prompt, history })
   const u = new URL(AGENT_URL)
   const req = http.request(
     {
@@ -167,27 +526,103 @@ function startJobRun(id, input) {
     },
   )
   req.on('error', () => finishJob(id, 'failed', null, 'agent-httpd unreachable'))
+  activeRuns.set(id, req)
   req.write(body)
   req.end()
 }
 function appendJobEvent(id, ev) {
-  const all = jobs()
-  const j = all[id]
-  if (!j) return
-  j.events.push(ev)
-  j.eventCount = j.events.length
-  j.updatedAt = new Date().toISOString()
-  saveJobs(all)
+  store.job.appendEvent(id, ev)
 }
 function finishJob(id, status, answer, error) {
-  const all = jobs()
-  const j = all[id]
+  activeRuns.delete(id)
+  const j = store.job.get(id)
   if (!j || j.status !== 'running') return
-  j.status = status
-  j.finishedAt = new Date().toISOString()
-  if (answer != null) j.answer = answer
-  if (error) j.error = error
-  saveJobs(all)
+  const patch = { status, finishedAt: new Date().toISOString() }
+  if (answer != null) patch.answer = answer
+  if (error) patch.error = error
+  store.job.update(id, patch)
+}
+
+// Execute a built-in tool and stream its result as resolve-studio SSE frames.
+function runBuiltinSSE(res, name, args) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  })
+  const frame = (event, obj) => 'event: ' + event + '\n' + 'data: ' + JSON.stringify(obj) + '\n\n'
+  ;(async () => {
+    try {
+      const text = await builtin.executeBuiltinTool(name, args)
+      res.write(frame('delta', { text: String(text) }))
+      res.write(frame('done', { answer: String(text) }))
+    } catch (err) {
+      if (err.code === 'UNKNOWN_TOOL') {
+        res.write(frame('delta', { text: '[' + name + '] 未注册' }))
+        res.write(frame('done', { answer: '' }))
+      } else {
+        res.write(frame('error', { message: err.message || 'tool execution failed' }))
+      }
+    }
+    res.end()
+  })()
+}
+
+// ---------- tool-layer 归属探测 ----------
+// 归属不能写死：宿主模式下 sidecar 是 launcher(:3099) 监管的子进程，容器模式下才归
+// compose，裸跑 `node server.js` 则无人监管。判据 = 问 launcher 控制面它监管的 pid
+// 是不是本进程（认领 = 'launcher'）。无人认领时按运行环境回落：/.dockerenv 存在 = 容器。
+// 为什么不用 /proc/1/cgroup 判容器：实测 OrbStack 容器里它是 "0::/"，不含 docker 字样；
+// /.dockerenv 在这个环境里确实存在。macOS 宿主两者都没有 → 'detached'。
+function inContainer() {
+  try {
+    return fs.existsSync('/.dockerenv')
+  } catch {
+    return false
+  }
+}
+
+function managedFallback() {
+  return inContainer() ? 'compose' : 'detached'
+}
+
+function probeManaged() {
+  const url = process.env.LAUNCHER_STATUS_URL || 'http://127.0.0.1:3099/status'
+  return new Promise((resolve) => {
+    let u
+    try {
+      u = new URL(url)
+    } catch {
+      return resolve(managedFallback())
+    }
+    const req = http.request(
+      {
+        host: u.hostname,
+        port: u.port || 80,
+        path: u.pathname || '/status',
+        method: 'GET',
+        timeout: 400,
+      },
+      (res) => {
+        let buf = ''
+        res.on('data', (c) => (buf += c))
+        res.on('end', () => {
+          let pid = null
+          try {
+            pid = JSON.parse(buf).pid
+          } catch {
+            /* 非 JSON 应答 = 不是本项目的 launcher，不可认领 */
+          }
+          resolve(pid === process.pid ? 'launcher' : managedFallback())
+        })
+      },
+    )
+    // 超时/连不上（宿主模式没有 launcher、或容器里没有 :3099）都走回落分支。
+    req.on('timeout', () => req.destroy())
+    req.on('error', () => resolve(managedFallback()))
+    req.end()
+  })
 }
 
 // ---------- router ----------
@@ -197,8 +632,39 @@ async function handle(req, res) {
   const method = req.method
   const q = parsed.searchParams
 
-  // ---- gateway: chat / pse / tools / tool/run -> agent-httpd ----
-  if ((p === '/api/chat' || p === '/api/pse') && method === 'POST') {
+  // Defense in depth: the frontend proxy injects the shared token on /api.
+  // Any other local process therefore cannot drive this API (which can write
+  // host files and run shell) even though it can reach sidecar:3000.
+  // /health stays open for the container healthcheck and the launcher probe.
+  if (p !== '/health' && !tokenMatches(req.headers['x-sidecar-token'], SIDECAR_TOKEN)) {
+    return send(res, 401, { error: 'unauthorized' })
+  }
+
+  // ---- PSE toggle ----
+  // Must be handled BEFORE the chat gateway below: POST /api/pse is the UI's
+  // toggle (body {enabled}), not a chat turn. Forwarding it to agent-httpd's
+  // /react/api/pse would start a three-role run with an empty message.
+  if (p === '/api/pse' && method === 'GET') {
+    const st = pseState()
+    return send(res, 200, {
+      enabled: st.enabled,
+      roles: [
+        { name: 'planner', description: '拆解任务、规划步骤' },
+        { name: 'specialist', description: '执行具体工具调用' },
+        { name: 'evaluator', description: '评审产物、给出结论' },
+      ],
+    })
+  }
+  if (p === '/api/pse' && method === 'POST') {
+    const body = await readBody(req)
+    const st = pseState()
+    st.enabled = body.enabled !== false
+    savePse(st)
+    return send(res, 200, { enabled: st.enabled })
+  }
+
+  // ---- gateway: chat / tools / tool/run -> agent-httpd ----
+  if (p === '/api/chat' && method === 'POST') {
     const body = await readBody(req)
     // resolve-studio frontend sends { messages:[{role,content}], model, ... };
     // agent-httpd expects { message, history }. Translate the request shape.
@@ -208,19 +674,55 @@ async function handle(req, res) {
       .filter((m) => m !== lastUser)
       .map((m) => ({ role: m.role, content: m.content }))
     const agentBody = { message: lastUser ? lastUser.content : '', history }
-    return agent.proxySSE(req, res, 'POST', p, Buffer.from(JSON.stringify(agentBody)))
+    // The UI toggle picks the route: /react/api/pse always runs the three-role
+    // orchestrator, /react/api/chat is the single ReAct agent (the container
+    // runs with PSE_ENABLED=false so this route is genuinely non-PSE).
+    const target = pseState().enabled ? '/api/pse' : '/api/chat'
+    return agent.proxySSE(req, res, 'POST', target, Buffer.from(JSON.stringify(agentBody)))
   }
   if (p === '/api/tool/run' && method === 'POST') {
     const body = await readBody(req)
+    const toolName = body.name
+    const toolArgs = body.arguments || body.args || {}
+    // Built-in tools (resolve-studio's backend-native set) execute locally in
+    // the sidecar; everything else proxies to agent-httpd.
+    if (builtin.BUILTIN_NAMES.has(toolName)) {
+      // The UI tool panel intentionally exposes every implemented tool to the
+      // local operator. Log the ones the conversational Agent cannot reach so
+      // high-privilege runs stay auditable (token + Origin/Host gate upstream).
+      if (!builtin.AGENT_TOOL_ALLOW.has(toolName)) {
+        console.log(`[sidecar] panel-only tool run: ${toolName}`)
+      }
+      return runBuiltinSSE(res, toolName, toolArgs)
+    }
     // resolve-studio shape: { name, arguments } -> agent shape: { name, args }
-    const agentBody = JSON.stringify({ name: body.name, args: body.arguments || {} })
+    const agentBody = JSON.stringify({ name: toolName, args: toolArgs })
     return agent.proxySSE(req, res, 'POST', p, Buffer.from(agentBody))
   }
   if (p === '/api/tools' && method === 'GET') {
-    return agent.proxyJSON(req, res, 'GET', p, null)
+    return handleToolsList(res)
   }
   if (p === '/api/tools/call' && method === 'POST') {
     const body = await readBody(req)
+    const toolName = body.name
+    const toolArgs = body.arguments || body.args || {}
+    if (builtin.BUILTIN_NAMES.has(toolName)) {
+      // Called by the agent-httpd bridge (SIDECAR_TOOLS_URL), NOT by the UI.
+      // Enforce the generated bridge's allowlist server-side: previously the
+      // "24 exposed tools" only constrained what the model could SEE, while
+      // this HTTP surface still offered all 44 builtins (shell/publish/write).
+      if (!builtin.AGENT_TOOL_ALLOW.has(toolName)) {
+        return send(res, 403, {
+          error: `tool "${toolName}" is not exposed to the agent bridge; run it from the frontend tool panel (call capabilities for the full list)`,
+        })
+      }
+      try {
+        const text = await builtin.executeBuiltinTool(toolName, toolArgs)
+        return send(res, 200, { name: toolName, result: String(text) })
+      } catch (err) {
+        return send(res, 200, { name: toolName, error: err.message || 'tool execution failed' })
+      }
+    }
     return agent.proxyJSON(req, res, 'POST', p, Buffer.from(JSON.stringify(body)))
   }
 
@@ -245,26 +747,6 @@ async function handle(req, res) {
     // crude keyword match against task descriptions
     const hit = TASKS.find((t) => t.id !== 'general' && msg.includes(t.id.replace('-', ' ')))
     return send(res, 200, { id: hit ? hit.id : null, name: hit ? hit.name : null })
-  }
-
-  // ---- pse status / toggle ----
-  if (p === '/api/pse' && method === 'GET') {
-    const st = pseState()
-    return send(res, 200, {
-      enabled: st.enabled,
-      roles: [
-        { name: 'planner', description: '拆解任务、规划步骤' },
-        { name: 'specialist', description: '执行具体工具调用' },
-        { name: 'evaluator', description: '评审产物、给出结论' },
-      ],
-    })
-  }
-  if (p === '/api/pse' && method === 'POST') {
-    const body = await readBody(req)
-    const st = pseState()
-    st.enabled = body.enabled !== false
-    savePse(st)
-    return send(res, 200, { enabled: st.enabled })
   }
 
   // ---- usage ----
@@ -369,7 +851,7 @@ async function handle(req, res) {
       })
     }
     dir = path.resolve(requested)
-    if (!isInsideRoot(dir, FS_ROOTS)) return send(res, 403, { error: 'path outside read roots' })
+    if (!isInsideRoot(dir)) return send(res, 403, { error: 'path outside read roots' })
     try {
       const parentDir = path.dirname(dir)
       parent = FS_ROOTS.includes(parentDir) ? null : parentDir
@@ -439,9 +921,8 @@ async function handle(req, res) {
 
   // ---- jobs ----
   if (p === '/api/jobs' && method === 'GET') {
-    const all = jobs()
-    const list = Object.values(all)
-      .map(({ events, ...meta }) => meta)
+    const list = store.job
+      .list()
       .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
     return send(res, 200, { jobs: list })
   }
@@ -465,40 +946,67 @@ async function handle(req, res) {
       events: [],
       eventCount: 0,
     }
-    const all = jobs()
-    all[id] = rec
-    saveJobs(all)
+    store.job.create(rec)
     startJobRun(id, body)
     return send(res, 200, { job: rec })
   }
   const jobMatch = p.match(/^\/api\/jobs\/([^/]+)(\/stream|\/cancel|\/resume|\/files)?$/)
   if (jobMatch) {
     const id = decodeURIComponent(jobMatch[1])
-    const all = jobs()
-    const j = all[id]
+    const j = store.job.get(id)
     if (!j) return send(res, 404, { error: 'job not found' })
     const sub = jobMatch[2]
-    if (!sub && method === 'GET') return send(res, 200, { job: j })
+    if (!sub && method === 'GET') {
+      return send(res, 200, { job: { ...j, events: store.job.events(id, 0) } })
+    }
     if (!sub && method === 'DELETE') {
-      delete all[id]
-      saveJobs(all)
+      store.job.remove(id)
+      // Drop the in-flight run too, otherwise a deleted job keeps streaming
+      // (and billing) in the background with nowhere to record its output.
+      const upstream = activeRuns.get(id)
+      if (upstream) {
+        activeRuns.delete(id)
+        try {
+          upstream.destroy()
+        } catch {
+          /* already closed */
+        }
+      }
       return send(res, 200, { ok: true })
     }
     if (sub === '/cancel' && method === 'POST') {
       if (j.status === 'running') {
-        j.status = 'cancelled'
-        j.finishedAt = new Date().toISOString()
-        saveJobs(all)
+        store.job.update(id, {
+          status: 'cancelled',
+          finishedAt: new Date().toISOString(),
+        })
+        // Abort the upstream agent-httpd request; otherwise the stream keeps
+        // running (and billing) until the model finishes, while its events are
+        // silently dropped because the job is no longer 'running'.
+        const upstream = activeRuns.get(id)
+        if (upstream) {
+          activeRuns.delete(id)
+          try {
+            upstream.destroy()
+          } catch {
+            /* already closed */
+          }
+        }
       }
       return send(res, 200, { ok: true })
     }
     if (sub === '/resume' && method === 'POST') {
       if (j.status === 'failed' || j.status === 'cancelled') {
-        j.status = 'running'
-        j.startedAt = new Date().toISOString()
-        j.updatedAt = j.startedAt
-        saveJobs(all)
-        startJobRun(id, { prompt: j.prompt, taskId: j.taskId })
+        const body = await readBody(req)
+        const now = new Date().toISOString()
+        store.job.update(id, { status: 'running', startedAt: now, updatedAt: now })
+        // Continue from the stored transcript instead of restarting blank.
+        startJobRun(id, {
+          prompt: j.prompt,
+          taskId: j.taskId,
+          history: j.answer ? [{ role: 'assistant', content: j.answer }] : [],
+          instruction: body.instruction,
+        })
       }
       return send(res, 200, { ok: true })
     }
@@ -529,15 +1037,20 @@ async function handle(req, res) {
         'X-Accel-Buffering': 'no',
       })
       let lastSeq = 0
-      res.write(`event: snapshot\ndata: ${JSON.stringify({ status: j.status, events: j.events })}\n\n`)
+      res.write(
+        `event: snapshot\ndata: ${JSON.stringify({
+          status: j.status,
+          events: store.job.events(id, 0),
+        })}\n\n`,
+      )
       const timer = setInterval(() => {
-        const cur = jobs()[id]
+        const cur = store.job.get(id)
         if (!cur) {
           clearInterval(timer)
           res.end()
           return
         }
-        const fresh = cur.events.filter((e) => e.seq > lastSeq)
+        const fresh = store.job.events(id, lastSeq)
         for (const e of fresh) {
           lastSeq = e.seq
           res.write(`event: job\ndata: ${JSON.stringify(e)}\n\n`)
@@ -590,10 +1103,8 @@ async function handle(req, res) {
 
   // ---- file preview (text) + raw ----
   if (p === '/api/file' && method === 'GET') {
-    const fp = q.get('path')
-    if (!fp) return send(res, 400, { error: 'missing path' })
-    const abs = path.resolve(fp)
-    if (!isInsideRoot(abs, FS_ROOTS)) return send(res, 403, { error: 'path outside read roots' })
+    const abs = guardedFilePath(res, q.get('path'))
+    if (!abs) return
     try {
       const st = fs.statSync(abs)
       const content = fs.readFileSync(abs, 'utf8')
@@ -603,10 +1114,8 @@ async function handle(req, res) {
     }
   }
   if (p === '/api/raw' && method === 'GET') {
-    const fp = q.get('path')
-    if (!fp) return send(res, 400, { error: 'missing path' })
-    const abs = path.resolve(fp)
-    if (!isInsideRoot(abs, FS_ROOTS)) return send(res, 403, { error: 'path outside read roots' })
+    const abs = guardedFilePath(res, q.get('path'))
+    if (!abs) return
     try {
       const st = fs.statSync(abs)
       res.writeHead(200, {
@@ -619,6 +1128,14 @@ async function handle(req, res) {
       send(res, 400, { error: err.message })
     }
     return
+  }
+
+  // ---- tool layer status ----
+  // managed 由 probeManaged() 实测得出（launcher / compose / detached）。不要再写死
+  // 'compose'：现在实际监管它的是宿主 launcher，写死会让前端显示错误的启停方式。
+  if (p === '/api/tool-layer' && method === 'GET') {
+    const managed = await probeManaged()
+    return send(res, 200, { running: true, managed, pid: process.pid })
   }
 
   // ---- health ----
@@ -690,9 +1207,102 @@ if (WORKSPACE_DIR) {
 
 const server = http.createServer((req, res) => {
   handle(req, res).catch((err) => {
-    send(res, 500, { error: err.message })
+    if (res.headersSent) {
+      try {
+        res.end()
+      } catch {
+        /* client already gone */
+      }
+      return
+    }
+    send(res, err.statusCode || 500, { error: err.message })
   })
 })
-server.listen(PORT, () => {
-  console.log(`[sidecar] listening on :${PORT}  agent=${AGENT_URL}  souls=${SOULS_DIR}`)
+seedMcpRegistry()
+server.listen(PORT, HOST, () => {
+  console.log(`[sidecar] listening on ${HOST}:${PORT}  agent=${AGENT_URL}  souls=${SOULS_DIR}`)
 })
+
+// Process-level guards. A rejected promise used to disappear silently, and a
+// stray exception could leave SSE clients / detached child processes behind.
+// A clean exit(1) lets the host launcher apply its respawn budget.
+process.on('unhandledRejection', (err) => {
+  console.error('[sidecar] unhandledRejection:', err && err.stack ? err.stack : err)
+})
+process.on('uncaughtException', (err) => {
+  console.error('[sidecar] uncaughtException:', err && err.stack ? err.stack : err)
+  process.exit(1)
+})
+function shutdown() {
+  console.log('[sidecar] received SIGTERM/SIGINT, closing')
+  server.close(() => process.exit(0))
+  // Long SSE streams can keep server.close() pending; never hang the launcher.
+  setTimeout(() => process.exit(0), 3000).unref()
+}
+process.on('SIGTERM', shutdown)
+process.on('SIGINT', shutdown)
+
+// After startup, backfill each seeded MCP server's toolCount/tools from the live
+// agent-httpd /api/tools response so the UI shows real counts instead of "0 tools".
+// agent-httpd may still be warming up, so retry until it answers.
+let mcpRefreshDone = false
+let mcpRefreshAttempts = 0
+function refreshMcpToolCounts() {
+  if (mcpRefreshDone) return
+  // Hit our own /api/tools proxy (which rewrites the path for agent-httpd) rather
+  // than calling agent-httpd directly — the raw /api/tools path 404s on backend.
+  // This is a loopback call to OUR OWN authenticated API, so it must carry the
+  // same token as every other /api request. Forgetting it returned 401 with an
+  // empty `tools` array and made the MCP toolCount backfill retry 30 times.
+  const req = http.request(
+    { method: 'GET', hostname: '127.0.0.1', port: PORT, path: '/api/tools', timeout: 5000,
+      headers: { 'X-Sidecar-Token': SIDECAR_TOKEN } },
+    (resp) => {
+      let body = ''
+      resp.on('data', (c) => (body += c))
+      resp.on('end', () => {
+        try {
+          const data = JSON.parse(body)
+          const tools = data.tools || []
+          const byServer = {}
+          for (const t of tools) {
+            const srv = t.server || 'unknown'
+            ;(byServer[srv] = byServer[srv] || []).push(t.name)
+          }
+          // Re-read the store fresh and only patch stdio servers, so we never
+          // clobber the concurrent HTTP-bridge refresh that may have saved first.
+          const m = mcpState()
+          let changed = false
+          for (const s of m.servers) {
+            if (s.transport !== 'stdio') continue
+            if (byServer[s.id] && byServer[s.id].length) {
+              s.toolCount = byServer[s.id].length
+              s.tools = byServer[s.id].map((n) => n.replace(/^[^_]*__/, ''))
+              changed = true
+            }
+          }
+          if (changed) {
+            saveMcp(m)
+            mcpRefreshDone = true
+            console.log(`[sidecar] backfilled tool counts for ${m.servers.length} MCP server(s)`)
+          }
+        } catch {
+          /* ignore malformed response */
+        }
+      })
+    }
+  )
+  req.on('error', () => {})
+  req.on('timeout', () => req.destroy())
+  req.end()
+}
+function scheduleMcpRefresh() {
+  if (mcpRefreshDone) return
+  refreshMcpToolCounts()
+  if (!mcpRefreshDone && mcpRefreshAttempts++ < 30) setTimeout(scheduleMcpRefresh, 3000)
+}
+scheduleMcpRefresh()
+// HTTP MCP bridges (mcp-fs/mcp-memory/mcp-think) are probed independently of the
+// stdio backfill above, since agent-httpd can't host them and they live on the
+// tsm-hub network.
+refreshHttpMcpServers()

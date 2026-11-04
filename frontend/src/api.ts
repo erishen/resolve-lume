@@ -542,8 +542,33 @@ export async function fetchWorkspaceStatus(): Promise<WorkspaceStatus> {
   return (await res.json()) as WorkspaceStatus
 }
 
-/** Kick off a background re-scan. `force` bypasses the cache and re-analyzes
- *  every project. Returns `{ started }` or `{ error }`. */
+/** Tool-layer status: what the UI should show as "tool layer". */
+export interface ToolLayerStatus {
+  /** Whether the tool layer (sidecar) answers at all. */
+  running: boolean
+  /** Who supervises this process: 'launcher' (host mode) | 'compose' | 'detached'. */
+  managed?: string
+  /** pid of the sidecar process, as reported by the sidecar itself. */
+  pid?: number
+  /** Which tools the sidecar currently exposes to the agent. */
+  tools: ToolSchema[]
+  /** Human-readable status, e.g. "Running" / "Stopped" / "unknown". */
+  status: string
+  /** ISO timestamp of the last status refresh. */
+  updatedAt: string
+}
+
+/** Query the tool layer status. `managed` tells who supervises it (launcher/compose/detached). */
+export async function fetchToolLayerStatus(): Promise<ToolLayerStatus | null> {
+  try {
+    const res = await fetch('/api/tool-layer')
+    if (!res.ok) return null
+    return (await res.json()) as ToolLayerStatus
+  } catch {
+    return null
+  }
+}
+
 export async function rescanWorkspace(
   force = false,
 ): Promise<{ started: boolean; pid?: number } | { error: string }> {

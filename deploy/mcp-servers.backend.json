@@ -1,0 +1,16 @@
+[
+  {
+    "id": "lume-tools",
+    "transport": "stdio",
+    "command": "lume-core",
+    "args": "--mcp /app/lume-tools/tools.lume",
+    "approval": false
+  },
+  {
+    "id": "sidecar",
+    "transport": "stdio",
+    "command": "lume-core",
+    "args": "--mcp /app/lume-tools/sidecar_ro.lume",
+    "approval": false
+  }
+]

@@ -5,9 +5,11 @@ import {
   fetchSkills,
   fetchTasks,
   fetchTools,
+  fetchToolLayerStatus,
   setPseEnabled,
   type SkillInfo,
   type TaskCatalog,
+  type ToolLayerStatus,
 } from './api'
 import { Composer, type ComposerHandle } from './Composer'
 import { FilePickerModal } from './FilePickerModal'
@@ -52,6 +54,11 @@ export function App() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // ---- tool-layer (sidecar) status ----
+  // null => the sidecar container is unreachable (UI shows "unknown").
+  // Lifecycle: 宿主模式由 sidecar/launcher.js 监管，容器模式才归 compose；这里只读展示状态，不提供启停。
+  const [toolLayer, setToolLayer] = useState<ToolLayerStatus | null>(null)
+
   // ---- UI state ----
   const [draft, setDraft] = useState('')
   const [showFilePicker, setShowFilePicker] = useState(false)
@@ -79,6 +86,15 @@ export function App() {
     localStorage.setItem('harness-theme', theme)
   }, [theme])
 
+  // ---- tool-layer lifecycle: poll status, start/stop handlers ----
+  const refreshToolLayer = useCallback(async () => {
+    setToolLayer(await fetchToolLayerStatus())
+  }, [])
+  useEffect(() => {
+    void refreshToolLayer()
+    const t = setInterval(() => void refreshToolLayer(), 5000)
+    return () => clearInterval(t)
+  }, [refreshToolLayer])
   // ---- domain hooks ----
   // Re-fetch just the tools list (used when MCP servers connect/disconnect at
   // runtime so the tools + derived examples stay in sync without a full reload).
@@ -477,6 +493,34 @@ export function App() {
                 <span className="usage-badge" title="本会话累计 token 与估算费用（¥）">
                   {formatUsage(chat.usage)}
                 </span>
+                <div className="tool-layer-control">
+                  <span
+                    className={`status-dot ${
+                      toolLayer === null ? 'unknown' : toolLayer.running ? 'on' : 'off'
+                    }`}
+                  />
+                  <span
+                    className="tool-layer-label"
+                    title="工具层（sidecar）：提供文件读写/命令执行/make 等工具。宿主模式由 sidecar/launcher.js 监管（make sidecar-host-start / make sidecar-host-stop），容器模式才归 docker compose（make up / make down）。"
+                  >
+                    工具层
+                  </span>
+                  {toolLayer === null ? (
+                    <span
+                      className="tool-layer-hint"
+                      title="sidecar 不可达：宿主模式运行 make sidecar-host-start，容器模式运行 make up"
+                    >
+                      未就绪
+                    </span>
+                  ) : (
+                    <span
+                      className="tool-layer-hint"
+                      title={`监管方：${toolLayer.managed ?? 'unknown'}（pid ${toolLayer.pid ?? '?'}）；宿主模式启停用 make sidecar-host-start / make sidecar-host-stop`}
+                    >
+                      {toolLayer.managed ?? 'unknown'}
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="app-controls">
                 <div className="more-menu-wrap">

@@ -2,7 +2,6 @@
   "name": "resolve-lume-frontend",
   "private": true,
   "version": "0.1.0",
-  "type": "module",
   "description": "React + Vite frontend for resolve-lume (ported from resolve-studio, backed by lume agent-httpd + sidecar)",
   "scripts": {
     "dev": "vite",

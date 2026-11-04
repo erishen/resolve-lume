@@ -24,19 +24,23 @@ WORKDIR /build
 COPY lume-core/ ./lume-core/
 RUN make -C lume-core all
 
-# ---------- 阶段 3: 运行时 ----------
-FROM node:24-bookworm-slim
+# ---------- 阶段 3: 运行时 (纯 C 二进制, 无需 node) ----------
+# 关键瘦身: backend 运行时只 exec /usr/local/bin/agent-httpd (C) + lume-core (C),
+# 由 backend-entrypoint.sh 直接拉起, 不依赖 node。ldd 证实 agent-httpd 仅依赖
+# libc/libm/libsqlite3.so.0/libcrypt.so.1, lume-core 仅 libc/libm/libsqlite3.so.0。
+# 因此运行时基础镜像用 debian:bookworm-slim 即可, 省掉 node:24-bookworm-slim 的
+# ~242MB (97MB debian + 145MB node) 层。
+# 不再装 python3/git/make/libgomp1/libmagic1, 也不再拷 uv —— 这些都是给
+# "Python MCP 桥 (portfolio-check / pse-review)" 备的, resolve-lume 未接入;
+# 宿主项目的 Makefile 构建由 sidecar (保留 python3 + uv) 负责, backend 不跑。
+FROM debian:bookworm-slim
 # curl: agent-httpd 的 LLM 上游通道 (fork curl -N 流式)
-# git/make/ca-certificates: Python PSE 框架桥 (uv run) 拉依赖用
-# libsqlite3-0/libgomp1/libmagic1: SQLite / lightgbm(xgboost) / python-magic 共享库
+# ca-certificates: git/https 到 LLM 的根证书
 # libcrypt1: lume-core -lcrypt
+# libsqlite3-0: agent-httpd / lume-core -lsqlite3
 RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      python3 curl git make ca-certificates libsqlite3-0 libgomp1 libmagic1 libcrypt1 \
+ && apt-get install -y --no-install-recommends curl ca-certificates libcrypt1 libsqlite3-0 \
  && rm -rf /var/lib/apt/lists/*
-# uv：可选，仅当接入 portfolio-check / pse-review 等 Python MCP 桥时启用
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
-ENV UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/ UV_HTTP_TIMEOUT=600
 
 WORKDIR /app
 # docroot（agent-httpd 以 cwd 为根；真实前端由 nginx 托管，这里仅占位）

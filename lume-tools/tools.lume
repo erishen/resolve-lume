@@ -2,7 +2,7 @@
 // 加载方式见 .data/mcp-servers.json 的 lume-tools 条目（command: lume-core, args: --mcp <本文件>）。
 // 工具名在 agent-httpd 侧会被重命名为 lume-tools__<name>，聊天里可直接 @ 调用。
 
-tool "rl_hello", "Return a greeting from the resolve-lume lume-core bridge. No params.", {}, () => {
+tool "rl_hello", "Return a greeting from the resolve-lume lume-core bridge. No params.", {}, (p) => {
   return "hello from resolve-lume (lume-core --mcp bridge)";
 };
 
@@ -14,10 +14,8 @@ tool "rl_add", "Add two numbers. Params: a (number), b (number)", {a: "number", 
   return float(p["a"]) + float(p["b"]);
 };
 
-tool "rl_list_dir", "List files in a directory. Params: dir (string)", {dir: "string"}, (p) => {
-  return files(p["dir"], false);
-};
-
-tool "rl_read", "Read a text file. Params: path (string)", {path: "string"}, (p) => {
-  return read_file(p["path"]);
-};
+// rl_list_dir / rl_read 已于 2026-11-04 摘除：它们解析的是 agent-httpd 容器内的
+// /app 命名空间，而 sidecar__list/read 一族解析的是宿主工作区（基准 work/）。
+// 实测一次 16 轮的任务里 agent 有 9 轮误用这两个演示工具去扫宿主项目（每次都白花
+// 一轮），因为描述里看不出命名空间差异。保留 hello/echo/add 三个作为 stdio 桥的
+// 存活探针 —— 它们不与任何真实工具同名，不会引起歧义。

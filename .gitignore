@@ -10,7 +10,33 @@ agent-httpd/bin/
 agent-httpd/www/js/
 lume-core/bin/
 
+# 本地备份 / 验证临时产物 / 退役设计归档 / 运行日志
+# 注意：.backup、.runtime 目前只被用户级全局 gitignore 覆盖，换机即失效，
+# 这里显式补上；.verify-tmp 含会话 DB 与 SSE 抓包，绝不能进仓。
+.backup/
+.verify-tmp/
+.runtime/
+legacy/
+logs/
+
+# 未启用的死配置 / 坏实现（保留在磁盘，勿入库）
+# volumes.yml 是纯注释、全仓无 -f 引用；server-entrypoint.cjs 是 .mjs 的
+# 重复实现且在 CJS 里用了 import.meta.url（必然报错），Dockerfile 也未引用。
+docker-compose.volumes.yml
+frontend/server-entrypoint.cjs
+
 # 运行时会话等
 .data/sessions/
 .data/build.log
 .data/buildx/
+# A2A peer registry(本节点准入哪些对端, 含 PEER_ROOT 派生身份, 勿进仓)
+.data/peers-identity.json
+
+# 宿主 sidecar 的运行时数据（sessions/jobs/mcp 状态、pid、日志）
+.data-sidecar/
+
+# peer 面运行时日志(后台起 peer_node.lume 时落这里)
+.runtime/
+
+# MCP 桥的本机 node_modules（~85MB，部署时现装，勿提交）
+deploy/mcp-bridge-node_modules/
