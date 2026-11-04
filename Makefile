@@ -169,8 +169,19 @@ test-gateway:
 	@node sidecar/security.test.js
 	@node sidecar/consistency.test.js
 
-# 一条命令跑完所有不依赖运行中服务的静态校验（改工具面 / 安全策略后跑这个）
-check: tools-lume-check test-gateway
-	@echo "✓ 工具桥生成约束 + 四处名单一致性 + 网关回归测试全部通过"
+# 前端回归：Node >= 22.6 原生剥 TS 类型，零依赖、不碰运行中的服务。
+#  - export: 会话 Markdown / 单条复制 / JSON / job 日志都不带出主目录与密钥
+#  - api:    SSE 断流有明确报错、POST 不自动重发、Stop 能中止工具流、job 流重连
+frontend-test:
+	@node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON frontend/src/export.test.mjs
+	@node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON frontend/src/api.test.mjs
 
-.PHONY: setup build up wait start down logs frontend-up sidecar-host-start sidecar-host-stop sidecar-host-status tools-lume tools-lume-check peer-check peer-serve test-gateway check
+# 前端类型 + 生产构建（需要 frontend/node_modules，先 npm install）。
+frontend-build-check:
+	@cd frontend && npm run typecheck && npm run build
+
+# 一条命令跑完所有不依赖运行中服务的静态校验（改工具面 / 安全策略后跑这个）
+check: tools-lume-check test-gateway frontend-test
+	@echo "✓ 工具桥生成约束 + 四处名单一致性 + 网关/SSE/导出回归测试全部通过"
+
+.PHONY: setup build up wait start down logs frontend-up sidecar-host-start sidecar-host-stop sidecar-host-status tools-lume tools-lume-check peer-check peer-serve test-gateway frontend-test frontend-build-check check

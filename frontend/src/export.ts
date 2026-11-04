@@ -1,5 +1,69 @@
 import type { JobRecord, UIMessage } from './types'
 
+/** Max characters of any single text block written into an export. */
+export const MAX_EXPORT_TEXT = 3000
+/** Serialized tool arguments are kept shorter than result bodies. */
+export const MAX_EXPORT_ARGS = 1000
+
+/** Truncate oversized blocks so one huge tool result can't balloon a shared log. */
+export function truncateForExport(s: string, limit = MAX_EXPORT_TEXT): string {
+  return s.length > limit ? `${s.slice(0, limit)}\n…[截断 ${s.length - limit} 字符]` : s
+}
+
+/**
+ * Remove local identity before a log is pasted into an issue / chat / blog.
+ * Absolute paths are reduced to their last three segments (the same policy
+ * jobToLog already used for `workspace`), and common credential shapes are
+ * masked. Exports are meant to be shared — copying a full `/Users/<name>/...`
+ * path or an API key out of a tool result is an easy privacy leak.
+ */
+export function redactForExport(s: string): string {
+  // Keeping just the last 3 segments is NOT enough: a short path such as
+  // `/Users/alice/notes.md` would still contain the account name. Drop the OS
+  // prefix AND the account segment first, then cap the remaining tail.
+  const collapse = (m: string, sep: '/' | '\\'): string => {
+    const parts = m.split(sep === '/' ? '/' : /[\\/]/).filter(Boolean)
+    const userIdx = parts.findIndex((p) => p === 'Users' || p === 'home')
+    const tail = userIdx >= 0 ? parts.slice(userIdx + 2) : parts
+    const shown = (tail.length ? tail : parts).slice(-3)
+    return `…${sep}${shown.join(sep)}`
+  }
+  return s
+    .replace(/\/(?:Users|home|workspace|work|tmp|var\/tmp)\/[^\s'"`)\],;]+/g, (m) =>
+      collapse(m, '/'),
+    )
+    .replace(/[A-Za-z]:[\\/][^\s'"`)\],;]+/g, (m) => collapse(m, '\\'))
+    .replace(
+      /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,})\b/g,
+      '<redacted>',
+    )
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._-]{12,}/g, '$1<redacted>')
+}
+
+/** One entry point for everything that goes into an exported document. */
+export function exportText(s: string, limit = MAX_EXPORT_TEXT): string {
+  return truncateForExport(redactForExport(s), limit)
+}
+
+/**
+ * JSON export of a conversation. Recursively sanitizes every string (including
+ * tool arguments and results) — a raw `JSON.stringify(chat.messages)` used to
+ * dump full tool output and host paths untouched.
+ */
+export function messagesToJson(messages: UIMessage[]): string {
+  const sanitize = (v: unknown): unknown => {
+    if (typeof v === 'string') return exportText(v)
+    if (Array.isArray(v)) return v.map(sanitize)
+    if (v && typeof v === 'object') {
+      return Object.fromEntries(
+        Object.entries(v as Record<string, unknown>).map(([k, val]) => [k, sanitize(val)]),
+      )
+    }
+    return v
+  }
+  return JSON.stringify(sanitize(messages), null, 2)
+}
+
 /** Convert a conversation to Markdown for export / clipboard. */
 export function messagesToMarkdown(messages: UIMessage[], title?: string): string {
   const lines: string[] = []
@@ -8,19 +72,24 @@ export function messagesToMarkdown(messages: UIMessage[], title?: string): strin
     const role = m.role === 'user' ? '👤 User' : '🤖 Assistant'
     lines.push(`## ${role}`, '')
     if (m.reasoning) {
-      lines.push('> **Thinking**', '', `> ${m.reasoning.replace(/\n/g, '\n> ')}`, '')
+      lines.push('> **Thinking**', '', `> ${exportText(m.reasoning).replace(/\n/g, '\n> ')}`, '')
     }
     if (m.content) {
-      lines.push(m.content, '')
+      lines.push(exportText(m.content), '')
     }
     if (m.toolCalls && m.toolCalls.length > 0) {
       for (const tc of m.toolCalls) {
         const status =
           tc.decision === 'reject' ? '❌ rejected' : tc.result ? '✅ done' : '⏳ pending'
         lines.push(`**Tool:** \`${tc.name}\` — ${status}`, '')
-        lines.push('```json', JSON.stringify(tc.arguments, null, 2), '```', '')
+        lines.push(
+          '```json',
+          exportText(JSON.stringify(tc.arguments, null, 2), MAX_EXPORT_ARGS),
+          '```',
+          '',
+        )
         if (tc.result) {
-          lines.push('**Result:**', '', '```', tc.result, '```', '')
+          lines.push('**Result:**', '', '```', exportText(tc.result), '```', '')
         }
       }
     }
@@ -39,7 +108,7 @@ export function assistantToMarkdown(m: UIMessage): string {
   const lines: string[] = []
   lines.push(`## 🤖 Assistant`, '')
   if (m.reasoning) {
-    lines.push('> **Thinking**', '', `> ${m.reasoning.replace(/\n/g, '\n> ')}`, '')
+    lines.push('> **Thinking**', '', `> ${exportText(m.reasoning).replace(/\n/g, '\n> ')}`, '')
   }
   if (m.toolCalls && m.toolCalls.length > 0) {
     lines.push(`**执行流程 (${m.toolCalls.length} 个工具调用)**`, '')
@@ -54,14 +123,28 @@ export function assistantToMarkdown(m: UIMessage): string {
               : '⏳ pending'
       const dur = tc.durationMs != null ? ` · ${tc.durationMs}ms` : ''
       lines.push(`### ${i + 1}. \`${tc.name}\` — ${mark}${dur}`, '')
-      lines.push('**参数：**', '', '```json', JSON.stringify(tc.arguments, null, 2), '```', '')
+      lines.push(
+        '**参数：**',
+        '',
+        '```json',
+        exportText(JSON.stringify(tc.arguments, null, 2), MAX_EXPORT_ARGS),
+        '```',
+        '',
+      )
       if (tc.result) {
-        lines.push(`**${tc.ok === false ? '错误' : '结果'}：**`, '', '```', tc.result, '```', '')
+        lines.push(
+          `**${tc.ok === false ? '错误' : '结果'}：**`,
+          '',
+          '```',
+          exportText(tc.result),
+          '```',
+          '',
+        )
       }
     })
   }
   if (m.content) {
-    lines.push('**回答：**', '', m.content, '')
+    lines.push('**回答：**', '', exportText(m.content), '')
   }
   return lines.join('\n')
 }
@@ -128,7 +211,7 @@ export function jobToLog(job: JobRecord): string {
   const time = (iso?: string) => (iso ? new Date(iso).toLocaleString() : '-')
   const isProblem = job.status === 'failed' || job.status === 'cancelled' || !!job.error
 
-  lines.push(`【任务】${job.name}`)
+  lines.push(`【任务】${truncateForExport(redactForExport(job.name), 200)}`)
   lines.push(`id: ${job.id} · 状态: ${job.status}`)
   lines.push(
     `时间: 创建 ${time(job.createdAt)} / 开始 ${time(job.startedAt)} / 结束 ${time(job.finishedAt)}`,
@@ -136,22 +219,22 @@ export function jobToLog(job: JobRecord): string {
   const extras: string[] = []
   if (job.taskId) extras.push(`任务模式: ${job.taskId}`)
   if (job.model) extras.push(`模型: ${job.model}`)
-  if (job.workspace) extras.push(`工作区: …/${job.workspace.split('/').slice(-3).join('/')}`)
+  if (job.workspace) extras.push(`工作区: ${truncateForExport(redactForExport(job.workspace), 200)}`)
   if (extras.length) lines.push(extras.join(' · '))
   if (job.usage) {
     lines.push(
       `用量: ${(job.usage.prompt + job.usage.completion).toLocaleString()} tok (prompt ${job.usage.prompt.toLocaleString()} / completion ${job.usage.completion.toLocaleString()}) · ¥${job.usage.cost.toFixed(4)}`,
     )
   }
-  if (job.error) lines.push(`错误: ${job.error}`)
+  if (job.error) lines.push(`错误: ${exportText(job.error)}`)
   lines.push('')
   lines.push('--- 提示词 ---')
-  lines.push(job.prompt)
+  lines.push(exportText(job.prompt))
   lines.push('')
 
-  const MAX_RESULT = 3000
-  const truncate = (s: string, limit: number) =>
-    s.length > limit ? `${s.slice(0, limit)}\n…[截断 ${s.length - limit} 字符]` : s
+  // Same truncation + redaction policy as the conversation exporters above;
+  // previously this was the only call site with a (locally defined) limiter.
+  const truncate = exportText
 
   if (isProblem) {
     // ---- failed / cancelled / error: full event dump ----
@@ -160,21 +243,21 @@ export function jobToLog(job: JobRecord): string {
       switch (ev.type) {
         case 'step': {
           const text = (ev.step.message.content ?? '').trim()
-          if (text) lines.push(`[${ev.seq}] step: ${text}`)
+          if (text) lines.push(`[${ev.seq}] step: ${exportText(text)}`)
           break
         }
         case 'tool-call': {
           lines.push(`[${ev.seq}] 调用: ${ev.call.name}`)
-          lines.push(truncate(JSON.stringify(ev.call.arguments, null, 2), 1000))
+          lines.push(truncate(JSON.stringify(ev.call.arguments, null, 2), MAX_EXPORT_ARGS))
           break
         }
         case 'tool-result': {
           lines.push(`[${ev.seq}] 结果: ${ev.call.name} ${ev.ok ? '✓' : '✗'} ${ev.durationMs}ms`)
-          lines.push(truncate(ev.result, MAX_RESULT))
+          lines.push(truncate(ev.result))
           break
         }
         case 'tool-progress':
-          lines.push(`[${ev.seq}] 进度: ${ev.chunk}`)
+          lines.push(`[${ev.seq}] 进度: ${exportText(ev.chunk)}`)
           break
         case 'approval-request':
           lines.push(`[${ev.seq}] 审批: ${ev.call.name}`)
@@ -185,7 +268,7 @@ export function jobToLog(job: JobRecord): string {
           )
           break
         case 'done':
-          lines.push(`[${ev.seq}] 完成: ${ev.answer}`)
+          lines.push(`[${ev.seq}] 完成: ${exportText(ev.answer)}`)
           break
         default:
           break
@@ -208,8 +291,8 @@ export function jobToLog(job: JobRecord): string {
         const dur = r ? ` ${r.durationMs}ms` : ''
         lines.push(`• ${call.call.name}${ok}${dur}`)
         if (r && !r.ok) {
-          lines.push(`  args: ${JSON.stringify(call.call.arguments)}`)
-          lines.push(`  error: ${r.result}`)
+          lines.push(`  args: ${exportText(JSON.stringify(call.call.arguments), MAX_EXPORT_ARGS)}`)
+          lines.push(`  error: ${exportText(r.result)}`)
         }
       }
     }
@@ -223,7 +306,7 @@ export function jobToLog(job: JobRecord): string {
         .find((e) => e.type === 'step')
         ?.step.message.content?.trim() ||
       ''
-    if (answer) lines.push('', answer)
+    if (answer) lines.push('', exportText(answer))
   }
   return lines.join('\n')
 }

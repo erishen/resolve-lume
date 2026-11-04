@@ -438,7 +438,9 @@ export function useChat({ tools, model, sessionId, systemPrompt, onRunComplete }
       }
 
       try {
-        await streamToolRun(name, args, handle)
+        // Pass the same AbortController as `send` — the Stop button used to
+        // abort chat streams but silently did nothing for tool retry runs.
+        await streamToolRun(name, args, handle, ac.signal)
       } catch (err) {
         setError((err as Error).message)
         patchAssistant({ pending: false })

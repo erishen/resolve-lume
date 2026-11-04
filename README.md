@@ -73,6 +73,7 @@ resolve-lume/
 ├── legacy/host-sidecar/     # 已退役的宿主 launcher/sidecar（仅存档，不参与运行）
 └── frontend/                # Vite + React 聊天前端
     ├── src/{api.ts,App.tsx,types.ts,main.tsx,styles.css}
+    ├── vite.config.ts       # dev 反代（/api→sidecar:3000 注入 token、/react→backend:8080 保留 Host）
     ├── server-entrypoint.mjs # 真正生效的静态服务 + /api、/react 反代（CSP、Origin/Host 校验、token 注入、SSE 无超时）
     ├── nginx.conf           # ⚠️ 未被 Dockerfile 使用的退役参考，别按它排障
     └── Dockerfile
@@ -125,7 +126,8 @@ make sidecar-host-start
 #   make frontend-up          # 只重建前端容器
 #   make sidecar-host-stop    # 停宿主 sidecar + launcher
 #   make down                 # 停两个容器（不影响宿主 sidecar）
-#   make check                # 静态校验：工具桥约束 + 四处名单一致性 + 网关回归
+#   make check                # 静态校验：工具桥约束 + 四处名单一致性 + 网关/SSE/导出回归
+#   make frontend-build-check  # 前端 tsc --noEmit + vite build（需 frontend/node_modules）
 
 # 5. 打开 http://127.0.0.1:18085
 #    浏览器 → frontend → sidecar → backend
@@ -136,8 +138,23 @@ make sidecar-host-start
 ```bash
 cd frontend
 npm install --registry https://registry.npmmirror.com
-npm run dev   # :5173，已配 /react 反代到 backend:8080
+npm run dev   # :5173
 ```
+
+`vite.config.ts` 的反代是 **dev 模式唯一生效的代理配置**（生产由容器内
+`server-entrypoint.mjs` 负责）：
+
+| 路径 | 默认目标 | 说明 |
+|---|---|---|
+| `/api/*` | `127.0.0.1:3000` 宿主 sidecar | Vite 在 Node 侧注入 `X-Sidecar-Token`（从仓库根 `.env` 读，**不进浏览器 bundle**）；客户端伪造的同名头会先被删除再强制覆盖 |
+| `/react/*` | `127.0.0.1:8080` backend | `changeOrigin:false` 保留原始 `Host`，否则后端同源校验 403 |
+
+两条链路都设了 `timeout/proxyTimeout = 0`，分钟级 SSE 长任务不会被掐断。
+**前提**：宿主 launcher + sidecar 已在跑（`make sidecar-host-start`）；frontend / backend
+容器不是必需的。需要改目标时，在仓库根 `.env` 或 shell 里设 `VITE_API_TARGET` /
+`VITE_BACKEND_TARGET`（例如把 `/api` 指到已起的 `http://127.0.0.1:18085`）。
+旧配置曾指向不存在的 `:8787`（web-server plugin），所有 dev 请求都会 502。
+探测本机地址记得带 `curl --noproxy '*'`，否则会被本机代理接走。
 
 > **设计说明**：sidecar 跑在宿主（非容器），直接复用宿主工具链、读写宿主真实项目路径，
 > 无需 bind mount / `host.docker.internal` 跨界。早期版本曾把它容器化（`sidecar/Dockerfile`
@@ -161,6 +178,14 @@ agent-httpd 的 API 与 resolve-studio 的 `/api/*` **不同**：
 - SSE：`data: {"t":"delta"|"note"|"error"|"done","d":"..."}`——**只有 `data:` 行，类型在 JSON 的 `t` 字段**（resolve-studio 用 `event:` 行）。
 - 工具：`GET /react/api/tools` 返回 `{tools:[{name,server,desc}]}`；调用名是 `<serverId>__<toolName>`。
 - frontend 的 Node 反代 `/react` **必须保留原始 `Host` 头**（不要改写成上游地址），否则后端同源校验返回 403。
+- **SSE 客户端策略**：`/api/chat`、`/api/tool/run` 是 POST 且非幂等 —— 断线**不自动重发**
+  （重发会重跑整个 Agent、重复烧 token）；流结束却没收到 `done`/`error` 时显式报
+  「连接中断，结果可能不完整」，已收到的内容保留。Stop 按钮的 `AbortSignal` 对聊天与
+  工具重试流都生效，并会主动 `reader.cancel()` 释放连接。
+- **job 流是 GET + 带 seq 的追加日志**，因此可以自动重连：`streamJob` 指数退避
+  （500ms→8s 封顶），每次重连先收 `snapshot`，`useJobs` 按 `seq` 去重；
+  「连接中断，正在重连」会显示在面板状态里，终态快照到达即停止重连。
+  校验：`make check` 里的 `frontend/src/api.test.mjs`（mock fetch 流，8 个用例）。
 
 ## 已知限制 / 路线图
 
@@ -300,5 +325,10 @@ make sidecar-host-stop && make sidecar-host-start
   `consistency.js` 与 `consistency.test.js`）；本地生成调试可临时 `ALLOW_TOOL_DRIFT=1`。
 - `/api/approval` 当前没有 gated tool 可解锁：端点会校验 `decision` / `callId`、记审计日志，
   并显式返回 `applied:false`，不再假装用户点「批准」真的改变了执行。
+- **导出脱敏**：会话 Markdown / 单条复制 / JSON / job 诊断日志统一走 `export.ts` 的
+  `exportText()` —— 绝对路径剥掉系统前缀与账户名后只留末 3 段（短路径也不带用户名）、
+  `sk-` / `ghp_` / `Bearer` 等凭据形态掩码、单段文本截断 3000 字。之前只有 `jobToLog`
+  有本地截断，JSON 导出是裸 `JSON.stringify(chat.messages)`，会把完整工具结果与宿主路径
+  带出去。校验：`make check` 里的 `frontend/src/export.test.mjs`（11 个用例）。
 - 与旧设计（`legacy/host-sidecar/`）相比：修复了「全量 env 透传」与
   「detached 子进程无人看管、崩了无声死掉」两个已知缺陷。

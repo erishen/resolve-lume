@@ -28,7 +28,13 @@ import { useChat } from './hooks/useChat'
 import { useMcp } from './hooks/useMcp'
 import { useSessions } from './hooks/useSessions'
 import { useMemory } from './hooks/useMemory'
-import { copyToClipboard, downloadText, messagesToMarkdown, safeFilename } from './export'
+import {
+  copyToClipboard,
+  downloadText,
+  messagesToJson,
+  messagesToMarkdown,
+  safeFilename,
+} from './export'
 import { PROMPT_TEMPLATES } from './prompts'
 import type { ModelInfo, ToolSchema, UIMessage } from './types'
 
@@ -337,9 +343,11 @@ export function App() {
     flashToast('Exported Markdown')
   }
   const exportJson = () => {
+    // Sanitized export: raw stringify leaked full tool results, host paths and
+    // any credentials that happened to appear in a tool call.
     downloadText(
       safeFilename(currentTitle, 'json'),
-      JSON.stringify(chat.messages, null, 2),
+      messagesToJson(chat.messages),
       'application/json',
     )
     setShowMoreMenu(false)

@@ -114,47 +114,79 @@ export async function deleteJob(id: string): Promise<boolean> {
   return res.ok
 }
 
+/** Connection-state callback for the job stream's reconnect loop. */
+export type JobStreamStatus = 'connected' | 'reconnecting'
+
+export interface JobStreamOptions {
+  /** Called when the SSE connection is established or being re-established. */
+  onStatus?: (state: JobStreamStatus, attempt: number) => void
+}
+
 /**
  * Stream a job's events. First a `snapshot` (status + all stored events), then
  * live `job` events while the job runs. Returns an AbortController so the caller
  * can stop re-attaching when the view closes.
+ *
+ * The stream is a GET over an append-only, seq-numbered event log, so it is
+ * safe to re-attach: every reconnect starts with a fresh snapshot and the
+ * caller de-duplicates live events by `seq` (see useJobs). Previously a dropped
+ * connection was swallowed by an empty catch and the detail view silently
+ * froze at its last event. Chat streams are POST + non-idempotent and are
+ * deliberately NOT auto-retried — re-sending would re-run the whole agent.
  */
 export function streamJob(
   id: string,
   onEvent: (ev: { type: 'snapshot'; status: JobStatus; events: JobEvent[] } | JobEvent) => void,
+  opts: JobStreamOptions = {},
 ): AbortController {
   const ac = new AbortController()
+  const url = `/api/jobs/${encodeURIComponent(id)}/stream`
+  let attempt = 0
+  let finished = false
+
   void (async () => {
-    try {
-      const res = await fetch(`/api/jobs/${encodeURIComponent(id)}/stream`, { signal: ac.signal })
-      if (!res.ok || !res.body) {
-        throw new Error(`job stream failed: ${res.status}`)
-      }
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        // Parse SSE frames: `event: <name>\ndata: <json>\n\n`.
-        let idx: number
-        while ((idx = buffer.indexOf('\n\n')) !== -1) {
-          const frame = buffer.slice(0, idx)
-          buffer = buffer.slice(idx + 2)
+    while (!ac.signal.aborted && !finished) {
+      try {
+        const res = await fetch(url, { signal: ac.signal })
+        if (!res.ok || !res.body) throw new Error(`job stream failed: ${res.status}`)
+        attempt = 0
+        opts.onStatus?.('connected', 0)
+        await readFrames(res, (frame) => {
           const eventLine = frame.split('\n').find((l) => l.startsWith('event: '))
           const dataLine = frame.split('\n').find((l) => l.startsWith('data: '))
-          if (!dataLine) continue
-          const data = JSON.parse(dataLine.slice(6))
-          if (eventLine?.startsWith('event: snapshot')) {
-            onEvent({ type: 'snapshot', status: data.status, events: data.events })
-          } else {
-            onEvent(data as JobEvent)
+          if (!dataLine) return
+          let data: Record<string, unknown>
+          try {
+            data = JSON.parse(dataLine.slice(6)) as Record<string, unknown>
+          } catch {
+            return
           }
-        }
+          if (eventLine?.startsWith('event: snapshot')) {
+            const status = data.status as JobStatus
+            onEvent({
+              type: 'snapshot',
+              status,
+              events: (data.events as JobEvent[]) ?? [],
+            })
+            // Terminal snapshot: no point in re-attaching to a finished job.
+            if (status && status !== 'running' && status !== 'queued') finished = true
+          } else {
+            const ev = data as unknown as JobEvent
+            onEvent(ev)
+            if (ev.type === 'done') finished = true
+          }
+        })
+      } catch (err) {
+        if (ac.signal.aborted) return
+        // Network blip / proxy restart — fall through to the backoff below.
+        if ((err as Error)?.name === 'AbortError') return
       }
-    } catch {
-      /* aborted / stream closed */
+      if (ac.signal.aborted || finished) return
+      attempt += 1
+      // 500ms, 1s, 2s, 4s, 8s, 8s, ... — cap so a dead backend doesn't spin.
+      const delay = Math.min(500 * 2 ** (attempt - 1), 8000)
+      opts.onStatus?.('reconnecting', attempt)
+      await interruptibleSleep(delay, ac.signal)
     }
   })()
   return ac
@@ -348,43 +380,34 @@ export async function streamToolRun(
   name: string,
   args: Record<string, unknown>,
   onEvent: (ev: ChatEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const res = await fetch('/api/tool/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, arguments: args }),
+    signal,
   })
   if (!res.ok || !res.body) {
     const data = (await res.json().catch(() => ({}))) as { error?: string }
     throw new Error(data.error ?? `tool run failed: ${res.status}`)
   }
 
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-
+  let terminal = false
   try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      let sep: number
-      while ((sep = buffer.indexOf('\n\n')) !== -1) {
-        const frame = buffer.slice(0, sep)
-        buffer = buffer.slice(sep + 2)
-        const parsed = parseFrame(frame)
-        if (parsed) onEvent(parsed)
-      }
-    }
+    await readFrames(res, (frame) => {
+      const parsed = parseFrame(frame)
+      if (!parsed) return
+      if (parsed.type === 'done' || parsed.type === 'error') terminal = true
+      onEvent(parsed)
+    })
   } catch (err) {
-    if ((err as Error)?.name === 'AbortError') return
+    if ((err as Error)?.name === 'AbortError' || signal?.aborted) return
     throw err
   }
-  const tail = buffer.trim()
-  if (tail) {
-    const parsed = parseFrame(tail)
-    if (parsed) onEvent(parsed)
-  }
+  // POST runs are non-idempotent: never auto-resend. But a stream that just
+  // stops without done/error is a broken proxy, not a completed tool call.
+  if (!terminal && !signal?.aborted) throw new Error(INCOMPLETE_STREAM_MESSAGE)
 }
 
 /** Fetch the available models and the backend's default model. */
@@ -422,38 +445,24 @@ export async function streamChat(
     throw new Error(`chat request failed: ${res.status}`)
   }
 
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-
+  let terminal = false
   try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-
-      // SSE frames are separated by a blank line.
-      let sep: number
-      while ((sep = buffer.indexOf('\n\n')) !== -1) {
-        const frame = buffer.slice(0, sep)
-        buffer = buffer.slice(sep + 2)
-        const parsed = parseFrame(frame)
-        if (parsed) onEvent(parsed)
-      }
-    }
+    await readFrames(res, (frame) => {
+      const parsed = parseFrame(frame)
+      if (!parsed) return
+      if (parsed.type === 'done' || parsed.type === 'error') terminal = true
+      onEvent(parsed)
+    })
   } catch (err) {
     // Aborting is an expected stop path, not an error — swallow it so the UI
     // just stops receiving events instead of showing a red error.
-    if ((err as Error)?.name === 'AbortError') return
+    if ((err as Error)?.name === 'AbortError' || signal?.aborted) return
     throw err
   }
-
-  // Flush any trailing frame.
-  const tail = buffer.trim()
-  if (tail) {
-    const parsed = parseFrame(tail)
-    if (parsed) onEvent(parsed)
-  }
+  // A normal run always ends with `done` (or `error` on upstream failure).
+  // Without one the connection died mid-answer; surface it instead of leaving
+  // a silently truncated bubble. Do NOT retry: a second POST re-runs the agent.
+  if (!terminal && !signal?.aborted) throw new Error(INCOMPLETE_STREAM_MESSAGE)
 }
 
 /** Fetch the current cumulative token/cost usage snapshot. */
@@ -585,6 +594,64 @@ export async function stopWorkspace(): Promise<{ stopped: boolean } | { error: s
   if (res.ok) return (await res.json()) as { stopped: boolean }
   const data = (await res.json().catch(() => null)) as { error?: string } | null
   return { error: data?.error ?? `stop failed (${res.status})` }
+}
+
+/** Shown when an SSE connection ends without `done`/`error`. */
+export const INCOMPLETE_STREAM_MESSAGE =
+  '连接中断：未收到完成事件，结果可能不完整（已保留已收到的内容）'
+
+/**
+ * Read an SSE response body frame-by-frame, flushing a trailing partial frame
+ * when the stream closes. Shared by chat / tool-run / job streams so the
+ * buffering rules (blank-line delimiter, UTF-8 streaming, tail flush) live in
+ * exactly one place.
+ */
+async function readFrames(res: Response, onFrame: (frame: string) => void): Promise<void> {
+  const reader = res.body!.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let sep: number
+      while ((sep = buffer.indexOf('\n\n')) !== -1) {
+        const frame = buffer.slice(0, sep)
+        buffer = buffer.slice(sep + 2)
+        onFrame(frame)
+      }
+    }
+  } catch (err) {
+    // Release the underlying socket on abort / network failure; otherwise the
+    // browser keeps a dangling fetch connection until the server notices.
+    await reader.cancel().catch(() => {})
+    throw err
+  } finally {
+    try {
+      reader.releaseLock()
+    } catch {
+      /* already released */
+    }
+  }
+  const tail = buffer.trim()
+  if (tail) onFrame(tail)
+}
+
+/** A reconnect backoff wait that resolves immediately when aborted. */
+function interruptibleSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve()
+    const onAbort = () => {
+      clearTimeout(timer)
+      resolve()
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 function parseFrame(frame: string): ChatEvent | null {

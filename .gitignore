@@ -19,9 +19,10 @@ lume-core/bin/
 legacy/
 logs/
 
-# 未启用的死配置 / 坏实现（保留在磁盘，勿入库）
-# volumes.yml 是纯注释、全仓无 -f 引用；server-entrypoint.cjs 是 .mjs 的
-# 重复实现且在 CJS 里用了 import.meta.url（必然报错），Dockerfile 也未引用。
+# 已删除的死配置 / 坏实现：volumes.yml 是纯注释且全仓无 -f 引用；
+# server-entrypoint.cjs 是 .mjs 的重复实现、在 CJS 里用了 import.meta.url
+# （必然报错），Dockerfile 也从未引用。P2 已备份到 .data-sidecar/ 后清理，
+# 保留忽略规则防止旧工作树/分支把它们带回来。
 docker-compose.volumes.yml
 frontend/server-entrypoint.cjs
 

@@ -131,6 +131,7 @@ export function useJobs() {
   const [files, setFiles] = useState<JobFile[]>([])
   const [error, setError] = useState<string | null>(null)
   const streamRef = useRef<AbortController | null>(null)
+  const reconnectingRef = useRef(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -179,6 +180,8 @@ export function useJobs() {
   const close = useCallback(() => {
     streamRef.current?.abort()
     streamRef.current = null
+    reconnectingRef.current = false
+    setError(null)
     setSelected(null)
   }, [])
 
@@ -193,6 +196,8 @@ export function useJobs() {
 
   const open = useCallback(async (id: string) => {
     streamRef.current?.abort()
+    reconnectingRef.current = false
+    setError(null)
     setSelected(null)
     setFiles([])
     const job = await fetchJob(id)
@@ -230,6 +235,18 @@ export function useJobs() {
               .catch(() => {})
           }, 500)
         }
+      }, {
+        // Surface reconnect attempts instead of silently freezing the detail
+        // view. Cleared as soon as a fresh snapshot arrives.
+        onStatus: (state, attempt) => {
+          if (state === 'reconnecting') {
+            reconnectingRef.current = true
+            setError(`连接中断，正在重连（第 ${attempt} 次）…`)
+          } else if (reconnectingRef.current) {
+            reconnectingRef.current = false
+            setError(null)
+          }
+        },
       })
       streamRef.current = ac
     }
