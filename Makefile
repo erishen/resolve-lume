@@ -19,7 +19,7 @@ up: build
 wait:
 	@printf "waiting for http://127.0.0.1:18085 "
 	@i=0; \
-	until curl -fsS -m 2 http://127.0.0.1:18085/api/tools >/dev/null 2>&1; do \
+	until curl --noproxy '*' -fsS -m 2 http://127.0.0.1:18085/api/tools >/dev/null 2>&1; do \
 		i=$$((i+1)); \
 		if [ $$i -ge 90 ]; then \
 			echo ""; echo "timed out after 90s — check: make logs"; docker compose ps; exit 1; \
@@ -40,19 +40,13 @@ logs:
 frontend-up:
 	docker compose up -d --build frontend
 
-# 仅重建 sidecar —— ⚠️ 已失效：compose 已移除 sidecar 服务，此目标会报
-# "no such service: sidecar"。sidecar 现为宿主常驻进程，改 sidecar/ 后重启它：
-#   make sidecar-host-stop && make sidecar-host-start
-# 若要恢复容器 sidecar，需先在 docker-compose.yml 重新加回 sidecar service 定义。
-sidecar-up:
-	docker compose up -d --build sidecar
-
 # ================= 宿主 sidecar 模式 =================
-# 说明：把 sidecar 从容器搬到宿主 macOS 常驻（监听 127.0.0.1:3000），backend/frontend
-# 仍在容器里。切换顺序：【先停容器 sidecar】再起宿主 sidecar，否则两边抢 3000 端口：
-#   docker compose rm -sf sidecar
-#   make sidecar-host-start
-# 回切容器模式：make sidecar-host-stop && docker compose up -d sidecar
+# sidecar 是宿主 macOS 常驻进程（127.0.0.1:3000），只有 backend/frontend 在容器里。
+# compose 里已没有 sidecar 服务，也就不存在「回切容器模式」；改 sidecar/ 后重启：
+#   make sidecar-host-stop && make sidecar-host-start
+# :3099 控制面的 /start /stop 需要 .env 里的 SIDECAR_TOKEN（本 Makefile 自动带 header，
+# 手工 curl 须自己加 X-Sidecar-Token）。轮换 token 只需重启 frontend/backend/sidecar：
+# launcher 每次请求热读 .env，无需重启。
 # 生命周期限制：launcher 是 nohup 进程（重启电脑后不会自动起来），开机自启需另配
 # launchd plist，详见 README「宿主 sidecar 模式」小节。
 
@@ -67,12 +61,15 @@ sidecar-host-start:
 	fi
 	@printf "waiting for launcher http://127.0.0.1:3099 "
 	@i=0; \
-	until curl -fsS -m 1 http://127.0.0.1:3099/health >/dev/null 2>&1; do \
+	until curl --noproxy '*' -fsS -m 1 http://127.0.0.1:3099/health >/dev/null 2>&1; do \
 		i=$$((i+1)); \
 		if [ $$i -ge 15 ]; then echo ""; echo "timed out — see .data-sidecar/launcher.log"; exit 1; fi; \
 		printf "."; sleep 1; \
 	done; echo " ok"
-	@curl -fsS -m 2 -X POST http://127.0.0.1:3099/start >/dev/null && echo "sidecar requested -> http://127.0.0.1:3000"
+	@TOK=$$(awk -F= '/^SIDECAR_TOKEN=/{print substr($$0,index($$0,"=")+1)}' .env); \
+	if [ -z "$$TOK" ]; then echo "✗ .env 缺少 SIDECAR_TOKEN（控制面已 fail-closed）" >&2; exit 1; fi; \
+	curl --noproxy '*' -fsS -m 2 -X POST -H "X-Sidecar-Token: $$TOK" http://127.0.0.1:3099/start >/dev/null \
+		&& echo "sidecar requested -> http://127.0.0.1:3000"
 	@echo "frontend 入口: http://127.0.0.1:18085（若 502，确认容器 sidecar 已停、backend 容器在跑）"
 
 # 停 launcher（其内部 SIGTERM 处理会连带停掉 sidecar 子进程）并清 pidfile
@@ -101,7 +98,7 @@ sidecar-host-status:
 		if kill -0 "$$LPID" 2>/dev/null; then echo "running pid=$$LPID"; \
 		else echo "pidfile 残留 pid=$$LPID（进程已死）"; fi; \
 	else echo "not started"; fi
-	@curl -fsS -m 1 http://127.0.0.1:3099/health >/dev/null 2>&1 \
+	@curl --noproxy '*' -fsS -m 1 http://127.0.0.1:3099/health >/dev/null 2>&1 \
 		&& echo "launcher /health: ok" || echo "launcher /health: no response"
 	@echo "--- sidecar (:3000) ---"
 	@if [ -f .data-sidecar/sidecar.pid ]; then \
@@ -109,7 +106,7 @@ sidecar-host-status:
 		if kill -0 "$$SPID" 2>/dev/null; then echo "running pid=$$SPID"; \
 		else echo "pidfile 残留 pid=$$SPID（进程已死）"; fi; \
 	else echo "no pidfile"; fi
-	@curl -fsS -m 1 http://127.0.0.1:3000/health >/dev/null 2>&1 \
+	@curl --noproxy '*' -fsS -m 1 http://127.0.0.1:3000/health >/dev/null 2>&1 \
 		&& echo "sidecar /health: ok" || echo "sidecar /health: no response"
 	@echo "--- 端口 3000 占用 ---"
 	@if lsof -nP -iTCP:3000 -sTCP:LISTEN >/dev/null 2>&1; then \
@@ -129,10 +126,12 @@ sidecar-host-status:
 # 改了 builtin-tools.json 或 --only 名单后，重新生成给 agent 用的代理层
 tools-lume:
 	node deploy/gen-sidecar-tools.mjs
+	@node sidecar/consistency.js --check
 
-# 只校验不写文件（先看名单和长度是否越界）
+# 只校验不写文件（先看名单和长度是否越界，再看四处工具名单是否漂移）
 tools-lume-check:
 	node deploy/gen-sidecar-tools.mjs --check
+	@node sidecar/consistency.js --check
 
 # ---- A2A peer 面(静态节点: resolve.* 只读摘要能力, 不带 agent 面) ----
 # 详见 peer_node.lume。Lume server 用工作树的完整版(../../lume/lume/bin/lume),
@@ -168,5 +167,10 @@ test-gateway:
 	@node sidecar/articleFrontmatter.test.js
 	@node sidecar/toolContract.test.js
 	@node sidecar/security.test.js
+	@node sidecar/consistency.test.js
 
-.PHONY: setup build up wait start down logs frontend-up sidecar-up sidecar-host-start sidecar-host-stop sidecar-host-status tools-lume tools-lume-check peer-check peer-serve test-gateway
+# 一条命令跑完所有不依赖运行中服务的静态校验（改工具面 / 安全策略后跑这个）
+check: tools-lume-check test-gateway
+	@echo "✓ 工具桥生成约束 + 四处名单一致性 + 网关回归测试全部通过"
+
+.PHONY: setup build up wait start down logs frontend-up sidecar-host-start sidecar-host-stop sidecar-host-status tools-lume tools-lume-check peer-check peer-serve test-gateway check

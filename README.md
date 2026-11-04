@@ -106,6 +106,9 @@ make setup
 # 2. 配置 LLM 网关（不填 key 也能跑：自动回落离线 demo 引擎）
 cp .env.example .env
 #    编辑 .env 填入 LLM_API_KEY（可选）
+#    ⚠️ 必填：把 SIDECAR_TOKEN 填成随机值（模板里是空值，留空则 frontend /
+#       backend / sidecar / launcher 全部 fail-closed 拒绝启动）：
+openssl rand -hex 32      # 复制输出，填到 .env 的 SIDECAR_TOKEN= 后面
 
 # 3. 起两个容器（backend + frontend，构建后等 /api 就绪）
 make start
@@ -122,6 +125,7 @@ make sidecar-host-start
 #   make frontend-up          # 只重建前端容器
 #   make sidecar-host-stop    # 停宿主 sidecar + launcher
 #   make down                 # 停两个容器（不影响宿主 sidecar）
+#   make check                # 静态校验：工具桥约束 + 四处名单一致性 + 网关回归
 
 # 5. 打开 http://127.0.0.1:18085
 #    浏览器 → frontend → sidecar → backend
@@ -203,8 +207,9 @@ make sidecar-host-status
 # 停止（launcher 的 SIGTERM 处理会连带停掉 sidecar 子进程并清 pidfile）
 make sidecar-host-stop
 
-# 回切容器模式（需先在 docker-compose.yml 重新加回 sidecar service 定义）
-make sidecar-host-stop && docker compose up -d sidecar
+# compose 里已没有 sidecar 服务，无需也不能「回切容器模式」。
+# 改了 sidecar/ 后的重启姿势（launcher 会跟着重启）：
+make sidecar-host-stop && make sidecar-host-start
 ```
 
 ### 组件与控制面
@@ -215,6 +220,15 @@ make sidecar-host-stop && docker compose up -d sidecar
 - `sidecar/launcher.js`：守护进程（纯 Node 内置模块），监听 `127.0.0.1:3099`，
   提供 `GET /health`、`GET /status`、`POST /start`、`POST /stop`。
   目前前端未接 `/launcher` 反代，控制面主要由上面的 make 目标调用。
+  **`POST /start`、`POST /stop` 需要 `X-Sidecar-Token`（取 `.env` 同值）、且 `Host`/`Origin`
+  必须是 loopback；`GET /health`、`GET /status` 只读、保持开放。** `make sidecar-host-start`
+  已自动带 header，手工 curl 示例：
+  ```bash
+  TOK=$(awk -F= '/^SIDECAR_TOKEN=/{print substr($0,index($0,"=")+1)}' .env)
+  curl --noproxy '*' -fsS -X POST -H "X-Sidecar-Token: $TOK" http://127.0.0.1:3099/stop
+  curl --noproxy '*' -fsS -X POST -H "X-Sidecar-Token: $TOK" http://127.0.0.1:3099/start
+  ```
+  launcher 每次控制请求都重读 `.env` 里的 token，所以轮换令牌**无需重启 launcher**。
 
 ### 崩溃重拉与限制
 
@@ -222,7 +236,7 @@ make sidecar-host-stop && docker compose up -d sidecar
   停止时，launcher 2 秒退避后自动重拉。
 - **重试上限：连续崩溃最多 5 次**，之后 launcher 放弃重拉并在
   `.data-sidecar/launcher.log` 写明原因，等待人工排查 sidecar.log 后再
-  `POST /start`（或 `make sidecar-host-stop && make sidecar-host-start`）。
+  带 token `POST /start`（或 `make sidecar-host-stop && make sidecar-host-start`）。
   sidecar 若连续稳定运行超过 30 秒，重试预算清零（健康跑过后的偶发崩溃不计数）。
 - **launcher 自身没有看门狗**：launcher 崩了 = 需要手动 `make sidecar-host-stop`
   清残留 pidfile 后重新 `make sidecar-host-start`。开机自启（含 launcher）需要
@@ -271,9 +285,20 @@ make sidecar-host-stop && docker compose up -d sidecar
   `X-Sidecar-Token`、backend 工具桥的 `SIDECAR_TOOLS_AUTH` 同源（三者必须同值）。
 - **`SIDECAR_TOKEN` 必填且必须是随机值**：源码 / compose / `.env.example` 均不再提供
   默认值，缺失时 frontend、sidecar、compose 一律 fail-closed 拒绝启动。生成用
-  `openssl rand -hex 32`；改值后须同时重启 frontend 容器、backend 容器与宿主 sidecar。
+  `openssl rand -hex 32`；改值后须同时重启 frontend 容器、backend 容器与宿主 sidecar
+  （launcher 热读 `.env`，不用重启）。
 - 安全边界：`/api/tools/call`（Agent 桥）按 `lume-tools/sidecar_ro.lume` 的开放名单做
   服务端硬校验；`/api/file`、`/api/raw` 与文件类工具拒绝 `.env` / 私钥 / 凭据，即便它们
   位于 FS_ROOTS 之内。前端面板仍可手动运行全部已实现工具（本地操作者有意保留）。
+- **make 参数防注入**：`runMakeIn` 对所有 `KEY=value` 参数做值白名单（仅普通 CLI flag /
+  slug / 路径 / 数字），因为 GNU make 会把 `$(ARGS)` 展开进 `/bin/sh` recipe；`;`、
+  `$( )`、反引号、管道、重定向、引号、换行一律拒绝。覆盖 `dev-stats` 的 `ARGS`、
+  `article-*` 的 `P=` 等全部调用点，新增业务工具也不会漏。
+- **工具链一致性**：schema（`builtin-tools.json`）、开放名单（`DEFAULT_ALLOW`）、生成桥
+  （`sidecar_ro.lume`）、真实实现（`BUILTIN_NAMES`）四者漂移时 sidecar **拒绝启动**，
+  避免再次出现「模型以为网关没挂载 article-write」。校验：`make check`（含
+  `consistency.js` 与 `consistency.test.js`）；本地生成调试可临时 `ALLOW_TOOL_DRIFT=1`。
+- `/api/approval` 当前没有 gated tool 可解锁：端点会校验 `decision` / `callId`、记审计日志，
+  并显式返回 `applied:false`，不再假装用户点「批准」真的改变了执行。
 - 与旧设计（`legacy/host-sidecar/`）相比：修复了「全量 env 透传」与
   「detached 子进程无人看管、崩了无声死掉」两个已知缺陷。

@@ -9,6 +9,7 @@ const fs = require('fs')
 const fsp = require('fs/promises')
 const path = require('path')
 const H = require('./business-helpers')
+const { isSafeMakeVarValue } = require('./security')
 
 // ===================== doc-library-search =====================
 const MARKDOWN_LIBRARY_URL = process.env.MARKDOWN_LIBRARY_URL || 'http://127.0.0.1:3300'
@@ -468,6 +469,13 @@ module.exports = {
     if (needsIdentity) {
       const devUser = process.env.DEV_STATS_USER
       if (devUser) rawArgs = `${rawArgs} --user ${devUser}`.trim()
+    }
+    // `ARGS` is expanded by /bin/sh inside the dev-stats Makefile recipe.
+    // Give the model an actionable, readable rejection instead of letting it
+    // retry blindly after a generic make failure (runMakeIn also enforces this
+    // for every caller; this check just produces a better explanation).
+    if (!isSafeMakeVarValue(rawArgs)) {
+      return `error: dev-stats 的 args 含不允许的字符（shell 元字符）。只接受普通 CLI 参数，例如 "--sort daily --limit 10"；分号、反引号、$( )、管道、重定向、引号、换行一律拒绝。收到 ${rawArgs.length} 个字符（不回显原文，避免注入文本进入会话上下文）。`
     }
     const makeArgs = [target]
     if (rawArgs) makeArgs.push(`ARGS=${rawArgs}`)

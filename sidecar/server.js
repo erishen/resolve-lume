@@ -912,11 +912,25 @@ async function handle(req, res) {
     return send(res, 200, { ok: true })
   }
 
-  // ---- approval (passthrough; lume demo does not gate tools) ----
+  // ---- approval (no gated tools in the lume runtime; be explicit) ----
   if (p === '/api/approval' && method === 'POST') {
     const body = await readBody(req)
-    // No gated tools in the current lume runtime; accept the decision as a no-op.
-    return send(res, 200, { ok: true, callId: body.callId, decision: body.decision })
+    const decision = String(body.decision || '')
+    const callId = String(body.callId || '')
+    if (decision !== 'approve' && decision !== 'reject') {
+      return send(res, 400, { error: 'decision must be "approve" or "reject"' })
+    }
+    if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(callId)) {
+      return send(res, 400, { error: 'invalid callId' })
+    }
+    // agent-httpd currently emits no approval-request frames, so there is no
+    // pending gate to release. Say so instead of silently pretending that a
+    // human decision changed anything; keep an audit trail for when it does.
+    console.log(`[sidecar] approval recorded (no active gate): ${callId} ${decision}`)
+    return send(res, 200, {
+      ok: true, applied: false, callId, decision,
+      note: 'current lume runtime has no gated tools; decision recorded, nothing was unblocked',
+    })
   }
 
   // ---- jobs ----
@@ -1218,6 +1232,24 @@ const server = http.createServer((req, res) => {
     send(res, err.statusCode || 500, { error: err.message })
   })
 })
+// Four tool lists must agree (schema / DEFAULT_ALLOW / generated bridge /
+// real implementations). Silently drifting one of them is exactly what made
+// the agent claim "article-write is not mounted", so refuse to start instead.
+// ALLOW_TOOL_DRIFT=1 is an explicit escape hatch for local generator work.
+try {
+  const drift = require('./consistency').checkToolChain({ implemented: builtin.BUILTIN_NAMES })
+  if (!drift.ok) {
+    console.error('[sidecar] FATAL: 工具链漂移，拒绝启动:\n  ' + drift.problems.join('\n  '))
+    console.error('[sidecar] 修法: make tools-lume；临时绕过: ALLOW_TOOL_DRIFT=1（不推荐）')
+    if (process.env.ALLOW_TOOL_DRIFT !== '1') process.exit(1)
+  } else {
+    const s = drift.stats
+    console.log(`[sidecar] tool chain consistent: schema=${s.schema} allow=${s.allow} bridge=${s.bridge} implemented=${s.implemented}`)
+  }
+} catch (err) {
+  console.error(`[sidecar] FATAL: 工具链一致性校验失败: ${err.message}`)
+  if (process.env.ALLOW_TOOL_DRIFT !== '1') process.exit(1)
+}
 seedMcpRegistry()
 server.listen(PORT, HOST, () => {
   console.log(`[sidecar] listening on ${HOST}:${PORT}  agent=${AGENT_URL}  souls=${SOULS_DIR}`)

@@ -4,9 +4,9 @@
 // 角色定位：
 //   sidecar（Node 网关 + 工具执行层）已从 docker 容器搬到宿主 macOS 常驻。本进程是它的
 //   薄管理壳——在宿主上 fork/回收 sidecar 子进程，并对外提供 loopback HTTP 控制面。
-//   理论调用链：UI 按钮 → frontend 容器 nginx 反代 /launcher/* → 本进程(:3099)
+//   理论调用链：UI 按钮 → frontend 容器 Node 服务反代 /launcher/* → 本进程(:3099)
 //   → spawn/kill sidecar(:3000)。目前前端尚未接 /launcher 反代，控制面主要经
-//   `make sidecar-host-start|stop|status` 调用。
+//   `make sidecar-host-start|stop|status` 调用（:3099 只监听 loopback）。
 //
 //   本进程自己由 make 目标 nohup 拉起（日志 .data-sidecar/launcher.log）；
 //   【launcher 自身崩溃 = 需要 `make sidecar-host-stop` 后重新
@@ -21,13 +21,16 @@
 //   3. env 不再由 launcher 全量透传给 sidecar——白名单 env 由子脚本
 //      start-host.sh 自行显式 export；launcher 只负责进程生命周期。
 //
-// HTTP 接口（仅 127.0.0.1，无 CORS 头）：
-//   GET  /health  -> "ok"
-//   GET  /status  -> { running: bool, pid?: number }
-//   POST /start   -> 未运行则拉起 sidecar，返回 { running, pid }
-//   POST /stop    -> 主动停止 sidecar（置 stopping，不触发重拉），返回 { running:false }
+// HTTP 接口（仅 loopback；/start /stop 需要 X-Sidecar-Token + 同源 Host/Origin）：
+//   GET  /health  -> "ok"                     （开放：make 就绪探测 / 健康检查）
+//   GET  /status  -> { running, pid? }        （开放：只读）
+//   POST /start   -> 未运行则拉起 sidecar
+//   POST /stop    -> 主动停止 sidecar（置 stopping，不触发重拉）
 //
-// 不加 CORS 的理由（沿用旧设计）：浏览器只能经 nginx 同源 /launcher/ 反代到达本
+// 控制面能 fork/杀宿主进程，之前 /start /stop 是零鉴权：任何本机进程（以及
+// 经 DNS rebinding 的任何网页）都能停掉工具层或反复拉起。现在用与 sidecar
+// 同源的 SIDECAR_TOKEN（从 .env 单键热读，轮换无需重启 launcher）做鉴权。
+// 不加 CORS 的理由（沿用旧设计）：浏览器只能经同源 /launcher 反代到达本
 // 控制面，加 wildcard CORS 等于把「能 fork/杀宿主进程」的控制台暴露给任意网页。
 
 'use strict'
@@ -36,6 +39,7 @@ const http = require('http')
 const { spawn } = require('child_process')
 const fs = require('fs')
 const path = require('path')
+const { checkControlAuth, isLoopbackHost, readEnvToken } = require('./security')
 
 // ---------- 路径常量 ----------
 const LAUNCHER_DIR = __dirname
@@ -49,6 +53,22 @@ const SIDECAR_LOGFILE = path.join(DATA_DIR, 'sidecar.log')
 // ---------- 可调参数 ----------
 const LAUNCHER_PORT = parseInt(process.env.LAUNCHER_PORT || '3099', 10)
 const LAUNCHER_HOST = process.env.LAUNCHER_HOST || '127.0.0.1'
+// This process can fork/kill host processes. Never let an ambient env var
+// widen the bind to 0.0.0.0 — loopback is a hard invariant, not a default.
+if (!isLoopbackHost(`${LAUNCHER_HOST}:${LAUNCHER_PORT}`)) {
+  console.error(`[launcher] FATAL: LAUNCHER_HOST=${LAUNCHER_HOST} is not loopback. Refusing to start.`)
+  process.exit(1)
+}
+const ENV_FILE = path.join(ROOT, '.env')
+// Re-read on every control request: rotating SIDECAR_TOKEN in .env then
+// restarting frontend/backend/sidecar is enough, launcher follows along.
+function currentToken() {
+  return process.env.SIDECAR_TOKEN || readEnvToken(ENV_FILE)
+}
+if (!currentToken()) {
+  console.error('[launcher] FATAL: SIDECAR_TOKEN is not set. Add a random value to .env (openssl rand -hex 32); see .env.example.')
+  process.exit(1)
+}
 // 崩溃重拉预算：连续崩溃超过此次数后放弃（侧记日志，等人工/ make 介入）。
 const MAX_RETRIES = 5
 const BACKOFF_MS = 2000
@@ -201,6 +221,20 @@ function sendJson(res, code, obj) {
 
 const server = http.createServer((req, res) => {
   const url = (req.url || '/').split('?')[0]
+  // Mutating endpoints are gated; read-only health/status stay open for make
+  // and container healthchecks. No CORS headers are ever emitted.
+  if (req.method === 'POST' && (url === '/start' || url === '/stop')) {
+    const auth = checkControlAuth({
+      provided: req.headers['x-sidecar-token'],
+      expected: currentToken(),
+      host: req.headers.host,
+      origin: req.headers.origin,
+    })
+    if (!auth.ok) {
+      log(`denied ${url}: ${auth.reason}`)
+      return sendJson(res, auth.code, { error: auth.reason })
+    }
+  }
   if (req.method === 'GET' && url === '/health') {
     res.writeHead(200, { 'Content-Type': 'text/plain' })
     res.end('ok')
@@ -269,6 +303,16 @@ async function shutdown() {
 }
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
+// A control-plane crash must not leave a half-alive supervisor holding :3099
+// while its sidecar child keeps running unmanaged.
+process.on('unhandledRejection', (reason) => {
+  log('unhandledRejection:', reason && reason.stack ? reason.stack : String(reason))
+})
+process.on('uncaughtException', (err) => {
+  log('uncaughtException:', err && err.stack ? err.stack : String(err))
+  shuttingDown = true
+  stopChild().finally(() => process.exit(1))
+})
 process.on('exit', () => {
   try {
     fs.unlinkSync(LAUNCHER_PIDFILE)

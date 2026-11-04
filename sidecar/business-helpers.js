@@ -23,6 +23,7 @@ const fsp = require('fs/promises')
 const path = require('path')
 const os = require('os')
 const { spawn } = require('child_process')
+const { unsafeMakeArgs } = require('./security')
 
 const WORKSPACE_DIR = process.env.WORKSPACE_DIR || '/workspace'
 
@@ -348,6 +349,17 @@ async function runPseTask(opts) {
 // Extra args must be plain tokens (target names / KEY=VALUE); anything richer
 // should go through the `shell` tool instead.
 async function runMakeIn(cwd, makeArgs, opts) {
+  // GNU make expands $(VAR) into a shell recipe. Even though we spawn `make`
+  // with an argv array, any shell metacharacter inside KEY=value is eventually
+  // interpreted by /bin/sh. Reject it once, here, for every caller.
+  const unsafe = unsafeMakeArgs(makeArgs)
+  if (unsafe.length) {
+    return {
+      ok: false,
+      error: `error: unsafe make arguments rejected — ${unsafe.join('; ')}. ` +
+        'make variable values are expanded by /bin/sh; only plain flags, slugs, paths and numbers are allowed.',
+    }
+  }
   const timeoutMs = (opts && opts.timeoutMs) || 300_000
   const maxOutput = (opts && opts.maxOutput) || 32 * 1024
   const env = (opts && opts.env) || uvEnvFor(cwd, process.env)
