@@ -1,0 +1,356 @@
+// peer_node.lume — resolve-lume 的 A2A peer 端点(静态节点, 不带 agent 面)
+//
+// 启动:
+//   PEER_ROOT=verify-root-2026 PEER_NAME=resolve-lume PEER_BIND=127.0.0.1 \
+//   PEER_PORT=18113 ../../lume/lume/bin/lume peer_node.lume
+//
+// 端点(全部需签名; 未配 PEER_ROOT 时整面 fail-closed):
+//   GET  /peer/health   健康与身份
+//   GET  /peer/tools    本节点能力清单
+//   POST /peer/invoke   执行本节点的 resolve.* 只读能力
+//   GET  /.well-known/agent-card.json  A2A 能力卡
+//
+// 说明: 与 crm/scanner/talentlens 同型 —— 静态节点, 能力全部来自本地
+// 文件(souls/ + sidecar/builtin-tools.json), 与 backend 容器/宿主 sidecar
+// 正交: 它们没起时这些能力照样可用。
+//
+// 隐私纪律: builtin-tools.json 里部分工具 description 含字段名(appid/appsecret),
+// 这里全量透传 description(截 120 字), 但**不暴露参数 JSON 的 values 字段**
+// (只暴露 name/description), 避免把运行时的凭据路径泄露进对端 LLM 上下文。
+// 用**本仓 submodule** 的 peer 库(lume-core/lib/peer.lume, 与 work/lume 同哈希),
+// 自包含不跨树。import 路径相对本 .lume 文件所在目录(resolve-lume/)。
+import "lume-core/lib/peer.lume" as peer;
+
+// ── resolve.* 静态只读能力 ──────────────────────────────────────────────
+// 摘要纪律: 结果进对端 agent 的 LLM 上下文, 大 JSON 必须截断 —— 与
+// tsm-hub 只出统计、talentlens 裁 people 字段同口径。
+
+// 提取一行 frontmatter 里 "key: value" 的 value: 若该行以 key 开头, 去掉 "key:" 前缀并 trim。
+// Lume 的 replace 是全量替换, 但 "description:" 这类 token 一行只出现一次, 去前缀安全。
+func rl_line_value(line: string, key: string) {
+  // 判断是否以 "key:" 开头(用 str_match 前缀正则, 与 lan/talentlens 同款)
+  let pat = "^" + key + ":";
+  if (len(str_match(pat, line)) == 0) { return ""; }
+  let v = replace(line, key + ":", "");
+  return str(trim(v));
+};
+
+// 读 souls/ 目录, 提取每个 SKILL.md 的 frontmatter(name/description/triggers)。
+// 返回 [{ name, desc, triggers }]。目录项带 "/" 后缀的是子目录(与 talentlens
+// cached_owners 同款判断法)。
+func rl_skills() {
+  let entries = files("souls");
+  let out = [];
+  for (let e in entries) {
+    let dname = str(e);
+    let folder = replace(dname, "/", "");
+    // 只处理子目录: 原串带 "/" 且去掉后非空才是目录
+    if (dname == folder or len(folder) == 0) { continue; }
+    let raw = read_file("souls/" + folder + "/SKILL.md");
+    if (raw == null) { continue; }
+    let lines = split(str(raw), "\n");
+    let desc = "";
+    let trig = "";
+    let in_fm = false;
+    let i = 0;
+    while (i < len(lines)) {
+      let ln = str(get(lines, i, ""));
+      if (ln == "---") {
+        if (!in_fm) { in_fm = true; i = i + 1; continue; }
+        else { break; }
+      }
+      if (in_fm) {
+        desc = rl_line_value(ln, "description");
+        trig = rl_line_value(ln, "triggers");
+      }
+      i = i + 1;
+    }
+    // 摘要纪律: 截断到固定长度, 避免整段 SKILL 描述进对端 LLM 上下文
+    if (len(desc) > 120) { desc = str(peer.prefix_of(desc, 120)) + "…"; }
+    if (len(trig) > 80) { trig = str(peer.prefix_of(trig, 80)) + "…"; }
+    push(out, { name: folder, desc: desc, triggers: trig });
+  }
+  return { ok: true, error: "", count: len(out), skills: out };
+};
+
+// 读 sidecar/builtin-tools.json, 提取每个 tool 的 name + description(截 120 字)。
+// 不暴露 parameters.values(避免运行时凭据路径)。
+func rl_tools() {
+  let raw = read_file("sidecar/builtin-tools.json");
+  if (raw == null or raw == "") {
+    return { ok: false, error: "builtin-tools.json 不存在" };
+  }
+  let p = try(() => json(raw));
+  if (p.err != null) {
+    return { ok: false, error: "builtin-tools.json 不是合法 JSON" };
+  }
+  let arr = get(p.ok, "tools", []);
+  let out = [];
+  let i = 0;
+  while (i < len(arr)) {
+    let t = get(arr, i, {});
+    let nm = str(get(t, "name", ""));
+    let desc = str(get(t, "description", ""));
+    if (len(desc) > 120) { desc = str(peer.prefix_of(desc, 120)) + "…"; }
+    push(out, { name: nm, desc: desc });
+    i = i + 1;
+  }
+  return { ok: true, error: "", count: len(out), tools: out };
+};
+
+// ── exec.* 能力: 把要动手的活递给宿主 sidecar 后台 job runner ─────
+// 与 resolve.* 不同: resolve.* 只读本地文件, 与 sidecar 正交;
+// exec.* **依赖 sidecar** 在线(127.0.0.1:3000), 它们没起时如实回 error。
+//
+// 这是 resolve-lume 从「纯查询侧静态节点」升级为「查询 + 执行侧代理」的关键:
+// 真正的 spawn/exec/shell 留在 sidecar 的 /api/jobs, 本节点只是透传 + 签名面。
+// a2a 侧的 task.delegate 通过 fleet.invoke_args("resolve-lume","exec.submit",...) 调用这里,
+// a2a 仍是任务态唯一写者(tasks/get 懒推进), 本节点只当 executor 的签名 proxy。
+
+let sidecar_base = env("SIDECAR_BASE");
+if (sidecar_base == null) { sidecar_base = "http://127.0.0.1:3000"; }
+if (len(str(sidecar_base)) == 0) { sidecar_base = "http://127.0.0.1:3000"; }
+
+// sidecar 的 /api/jobs 要 x-sidecar-token(nginx 反代时注入, 本仓 .env 里有 SIDECAR_TOKEN)。
+//
+// 为什么 read_file 解析而不是 env(): 框架安全设计,env() 对名字含 TOKEN/SECRET/
+// API_KEY 的变量刻意返 null(防把凭据读出来发走)。副作用是本地 lume 脚本要读
+// 这个 token 时拿不到, 只能直接读 .env 文件。仓 CWD 就是 resolve-lume/(make
+// peer-serve 起法), .env 就在那。
+let sidecar_token = "";
+let _env_txt = read_file(".env");
+if (_env_txt != null) {
+  let _lines = split(str(_env_txt), "\n");
+  let _i = 0;
+  while (_i < len(_lines)) {
+    let _ln = str(get(_lines, _i, ""));
+    if (len(str_match("^SIDECAR_TOKEN=", _ln)) > 0) {
+      sidecar_token = trim(replace(_ln, "SIDECAR_TOKEN=", ""));
+    }
+    _i = _i + 1;
+  }
+}
+
+func exec_submit(args) {
+  let prompt = str(get(args, "prompt", ""));
+  if (len(prompt) == 0) {
+    return { ok: false, error: "exec.submit 需要 prompt 字段" };
+  }
+  let p = { prompt: prompt };
+  let tid = str(get(args, "taskId", ""));
+  if (len(tid) > 0) { p = put(p, "taskId", tid); }
+  let model = str(get(args, "model", ""));
+  if (len(model) > 0) { p = put(p, "model", model); }
+  let body = stringify(p);
+  let hdrs = { "Content-Type": "application/json" };
+  if (len(sidecar_token) > 0) { hdrs = put(hdrs, "x-sidecar-token", sidecar_token); }
+  let r = http_post(sidecar_base + "/api/jobs",
+                    { timeout: 30, allow_private: true, headers: hdrs, body: body });
+  let j = try(() => json(str(get(r, "body", ""))));
+  if (j.err != null) {
+    return { ok: false, error: "sidecar 不可达或响应非 JSON: " + str(get(r, "err", "")) };
+  }
+  let status = int(get(r, "status", 0));
+  if (status == 401) {
+    return { ok: false, error: "sidecar 鉴权失败(401): SIDECAR_TOKEN 未读到, 检查 .env 与 .env 在 CWD" };
+  }
+  let job = get(j.ok, "job", {});
+  let job_id = str(get(job, "id", ""));
+  return { ok: true, error: "", job_id: job_id };
+};
+
+func exec_status(args) {
+  let job_id = str(get(args, "job_id", ""));
+  if (len(job_id) == 0) {
+    return { ok: false, error: "exec.status 需要 job_id" };
+  }
+  let hdrs = {};
+  if (len(sidecar_token) > 0) { hdrs = put(hdrs, "x-sidecar-token", sidecar_token); }
+  let r = http_get(sidecar_base + "/api/jobs/" + job_id,
+                   { timeout: 5, allow_private: true, headers: hdrs });
+  let j = try(() => json(str(get(r, "body", ""))));
+  if (j.err != null) {
+    return { ok: false, error: "sidecar 不可达或响应非 JSON: " + str(get(r, "err", "")) };
+  }
+  let job = get(j.ok, "job", {});
+  // sidecar 重启丢库时 404: 显式报, 让 a2a 的懒推进知道 job 没了(保持 working 再试),
+  // 而不是把空 job 当 running 一路绿灯。
+  if (int(get(r, "status", 0)) == 404) {
+    return { ok: false, error: "job 不存在(404, sidecar 可能重启丢了库) job_id=" + job_id };
+  }
+  return { ok: true, error: "", job: job };
+};
+
+// 静态 + 执行能力清单。
+func rl_static_tools() {
+  return [
+    { name: "resolve.skills",
+      desc: "resolve-lume 的 PSE 可编排任务目录: 7 个技能(名/描述/触发词), 已截断; planner/specialist/evaluator 是三角色基建不计入",
+      "when_to_use": "问『工作台能帮我干什么活/有什么 PSE 流水线/哪些技能』时用。",
+      "peer_callable": true },
+    { name: "resolve.tools",
+      desc: "resolve-lume 的 sidecar 内置工具目录: 全部工具(名/描述截 120 字), 不含参数值",
+      "when_to_use": "问『工作台有哪些工具/能调什么 API』时用。",
+      "peer_callable": true },
+    { name: "exec.submit",
+      desc: "把一段指令递给宿主 sidecar 后台 job runner, 立刻返回 job_id(异步, 不阻塞)。" +
+            "真正动手(spawn/exec/shell)在 sidecar; 本节点只做签名 proxy。" +
+            "依赖 sidecar 在线(127.0.0.1:3000 或 $SIDECAR_BASE)。",
+      "when_to_use": "需要后台跑一段活、不等它跑完时用。",
+      "peer_callable": true },
+    { name: "exec.status",
+      desc: "查一个 exec.submit 派出去的 job 当前态(running/succeeded/failed/cancelled)。",
+      "when_to_use": "想知道那个后台 job 干完没时用。",
+      "peer_callable": true },
+  ];
+};
+
+let bind_addr = env("PEER_BIND");
+if (bind_addr == null) { bind_addr = "127.0.0.1"; }
+let port_s = env("PEER_PORT");
+if (port_s == null) { port_s = "18113"; }
+
+server {
+  port = int(port_s);
+  workers = 2;
+  bind = bind_addr;
+};
+
+if (len(peer.config_warnings()) > 0) {
+  print("[peer] signature mode: " + peer.key_mode());
+  let wi = 0;
+  while (wi < len(peer.config_warnings())) {
+    print("[peer] WARN " + str(get(peer.config_warnings(), wi, "")));
+    wi = wi + 1;
+  }
+}
+
+get "/peer/health", (req) => {
+  let v = peer.verify(req, "GET", "GET " + peer.path_only(req.path));
+  if (!get(v, "ok", false)) {
+    return { ok: false, unauthorized: true, error: get(v, "error", "") };
+  }
+  return {
+    ok: true,
+    node: peer.node_info()["name"],
+    peer: get(v, "node", ""),
+    ts: int(now()),
+    mode: peer.key_mode(),
+    warnings: peer.config_warnings(),
+  };
+};
+
+get "/peer/tools", (req) => {
+  let v = peer.verify(req, "GET", "GET " + peer.path_only(req.path));
+  if (!get(v, "ok", false)) {
+    return { ok: false, unauthorized: true, error: get(v, "error", "") };
+  }
+  let st = rl_static_tools();
+  let out = [];
+  let i = 0;
+  while (i < len(st)) {
+    let d = get(st, i, {});
+    push(out, {
+      name: get(d, "name", ""),
+      "server": "resolve-lume",
+      desc: get(d, "desc", ""),
+      "when_to_use": get(d, "when_to_use", ""),
+      "peer_callable": true,
+      "peer_blocked_reason": "",
+    });
+    i = i + 1;
+  }
+  return {
+    ok: true,
+    node: peer.node_info()["name"],
+    summary: "resolve-lume 智能工作台: PSE 灵魂/技能目录 + sidecar 内置工具目录, 全部只读摘要。" +
+             " 问『能干什么活/有什么工具』用 resolve.*; 实际执行仍需走 resolve-lume 自己的 UI/sidecar。",
+    tools: out,
+    error: "",
+    agent_status: 0,
+    "static_tools": "resolve.skills/resolve.tools 恒可用(读本地 souls/ + sidecar/builtin-tools.json)",
+  };
+};
+
+post "/peer/invoke", (req) => {
+  let body = str(get(req, "body", ""));
+  let v = peer.verify(req, "POST", "POST " + peer.path_only(req.path) + "\n" + body);
+  if (!get(v, "ok", false)) {
+    return { ok: false, unauthorized: true, error: get(v, "error", "") };
+  }
+  let parsed = try(() => json(body));
+  if (parsed.err != null) {
+    return { ok: false, error: "body 不是合法 JSON" };
+  }
+  let tool_name = str(get(parsed.ok, "tool", ""));
+  if (len(tool_name) == 0) {
+    return { ok: false, error: "缺少 tool 字段" };
+  }
+  if (len(str_match("^resolve\\.", tool_name)) > 0) {
+    let hit = null;
+    if (tool_name == "resolve.skills") { hit = rl_skills(); }
+    else if (tool_name == "resolve.tools") { hit = rl_tools(); }
+    if (hit == null) {
+      return { ok: false, node: peer.node_info()["name"], from: get(v, "node", ""),
+               "tool": tool_name,
+               error: "未知 resolve.* 能力 '" + tool_name + "'(支持: resolve.skills/resolve.tools)" };
+    }
+    return {
+      ok: get(hit, "ok", false),
+      node: peer.node_info()["name"],
+      from: get(v, "node", ""),
+      "tool": tool_name,
+      result: (get(hit, "ok", false) ? hit : null),
+      "is_static": true,
+      error: get(hit, "error", ""),
+    };
+  }
+  // exec.* 需要 arguments(prompt / job_id 等), 与 resolve.* 的无参静态能力不同。
+  if (len(str_match("^exec\\.", tool_name)) > 0) {
+    let args = get(parsed.ok, "arguments", {});
+    if (args == null) { args = {}; }
+    let hit = null;
+    if (tool_name == "exec.submit") { hit = exec_submit(args); }
+    else if (tool_name == "exec.status") { hit = exec_status(args); }
+    if (hit == null) {
+      return { ok: false, node: peer.node_info()["name"], from: get(v, "node", ""),
+               "tool": tool_name,
+               error: "未知 exec.* 能力 '" + tool_name + "'(支持: exec.submit/exec.status)" };
+    }
+    return {
+      ok: get(hit, "ok", false),
+      node: peer.node_info()["name"],
+      from: get(v, "node", ""),
+      "tool": tool_name,
+      result: (get(hit, "ok", false) ? hit : null),
+      "is_static": false,
+      error: str(get(hit, "error", "")),
+    };
+  }
+  return {
+    ok: false, denied: true, node: peer.node_info()["name"],
+    from: get(v, "node", ""), "tool": tool_name,
+    error: "本节点只开放 resolve.* 只读能力, 不接受其他工具调用"
+  };
+};
+
+get "/.well-known/agent-card.json", (req) => {
+  let st = rl_static_tools();
+  let tools = [];
+  let i = 0;
+  while (i < len(st)) {
+    let d = get(st, i, {});
+    push(tools, { name: get(d, "name", ""), desc: get(d, "desc", ""),
+                  when_to_use: get(d, "when_to_use", "") });
+    i = i + 1;
+  }
+  return {
+    name: peer.node_info()["name"],
+    description: "resolve-lume 智能工作台: PSE 灵魂/技能目录 + sidecar 内置工具目录, 全部只读摘要。",
+    version: "1.0",
+    capabilities: { tools: tools },
+    endpoints: { invoke: "/peer/invoke", tools: "/peer/tools" },
+  };
+};
+
+run();
