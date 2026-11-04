@@ -121,11 +121,14 @@ let sidecar_token = "";
 let _env_txt = read_file(".env");
 if (_env_txt != null) {
   let _lines = split(str(_env_txt), "\n");
+  // 用 split("=") 逐行解析, 不用 str_match/replace: 这两者对「非 SIDECAR_TOKEN
+  // 的行」语义不稳(str_match 返回 list、replace 对无子串的行改道), 会让
+  // sidecar_token 解析到空 → sidecar 401。split 对每个 key 都确定, 最稳。
   let _i = 0;
   while (_i < len(_lines)) {
-    let _ln = str(get(_lines, _i, ""));
-    if (len(str_match("^SIDECAR_TOKEN=", _ln)) > 0) {
-      sidecar_token = trim(replace(_ln, "SIDECAR_TOKEN=", ""));
+    let _parts = split(str(get(_lines, _i, "")), "=");
+    if (get(_parts, 0, "") == "SIDECAR_TOKEN") {
+      sidecar_token = trim(get(_parts, 1, ""));
     }
     _i = _i + 1;
   }
