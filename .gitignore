@@ -36,6 +36,9 @@ frontend/server-entrypoint.cjs
 # 宿主 sidecar 的运行时数据（sessions/jobs/mcp 状态、pid、日志）
 .data-sidecar/
 
+# sidecar 进程内 SQLite / 会话落盘（宿主运行时数据，不进仓）
+sidecar/data/
+
 # peer 面运行时日志(后台起 peer_node.lume 时落这里)
 .runtime/
 

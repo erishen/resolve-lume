@@ -436,23 +436,95 @@ function handleToolsList(res) {
   req.end()
 }
 
-// ---------- tasks catalog (static; lume has no task registry of its own) ----------
-const TASKS = [
-  {
-    id: 'general',
-    name: '通用对话',
-    description: '默认模式：单 agent 直接对话（不启用 PSE 三角色）。',
-    includeTools: [],
-    systemPrompt: '',
-  },
-  {
+// ---------- tasks catalog (dynamic: built from SOULS_DIR business souls) ----------
+// resolve-studio ships a static task registry (packages/core/src/plugins/tasks.ts)
+// where each task bundles a tool whitelist + a system prompt. resolve-lume keeps
+// the same contract but derives the catalog from the souls on disk: every
+// SOULS_DIR subdir whose SOUL.md carries YAML frontmatter is a business task;
+// the frontmatter (name/description/triggers/tools) is the task metadata and the
+// markdown body is the per-task system prompt injected into agent-httpd. The PSE
+// role souls (planner/specialist/evaluator) are consumed by pse.c and are NOT
+// user-selectable tasks, so they are skipped here.
+const PSE_ROLE_DIRS = new Set(['planner', 'specialist', 'evaluator'])
+
+// Parse a minimal YAML frontmatter block (`---\nkey: value\n---\n`) into a flat
+// { key: value } map plus the body text after it. Returns null when the file has
+// no frontmatter (e.g. a PSE role soul, which is plain markdown).
+function parseSoulFrontmatter(text) {
+  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/)
+  if (!m) return null
+  const data = {}
+  for (const raw of m[1].split(/\r?\n/)) {
+    const idx = raw.indexOf(':')
+    if (idx <= 0) continue
+    const key = raw.slice(0, idx).trim()
+    let val = raw.slice(idx + 1).trim()
+    if (
+      (val.startsWith('"') && val.endsWith('"')) ||
+      (val.startsWith("'") && val.endsWith("'"))
+    ) {
+      val = val.slice(1, -1)
+    }
+    data[key] = val
+  }
+  return { data, body: text.slice(m[0].length) }
+}
+
+// Build the task catalog fresh from disk. Cheap (a handful of small files) and
+// keeps the catalog in sync with SOULS_DIR without a restart when a soul is
+// added or edited.
+function buildTasks() {
+  const tasks = [
+    {
+      id: 'general',
+      name: '通用对话',
+      description: '默认模式：单 agent 直接对话（不启用 PSE 三角色）。',
+      triggers: '',
+      includeTools: [],
+      systemPrompt: '',
+    },
+  ]
+  try {
+    const names = fs.readdirSync(SOULS_DIR)
+    for (const name of names) {
+      if (PSE_ROLE_DIRS.has(name)) continue
+      const soulPath = path.join(SOULS_DIR, name, 'SOUL.md')
+      if (!fs.existsSync(soulPath)) continue
+      const txt = fs.readFileSync(soulPath, 'utf8')
+      const fm = parseSoulFrontmatter(txt)
+      if (!fm) continue // plain markdown (PSE role) -> not a user task
+      const tools = (fm.data.tools || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+      tasks.push({
+        id: name,
+        name: fm.data.name || name,
+        description: fm.data.description || '',
+        triggers: fm.data.triggers || '',
+        includeTools: tools,
+        systemPrompt: fm.body.trim(),
+      })
+    }
+  } catch {
+    /* souls dir missing -> only the meta tasks remain */
+  }
+  tasks.push({
     id: 'pse-review',
     name: 'PSE 三角色评审',
     description: 'Planner / Specialist / Evaluator 三角色协作，适合需要多视角评审的任务。',
+    triggers: '',
     includeTools: [],
     systemPrompt: '',
-  },
-]
+  })
+  return tasks
+}
+
+// Resolve a task by id (or undefined when absent/empty).
+function getTask(id) {
+  if (!id) return undefined
+  return buildTasks().find((t) => t.id === id)
+}
 const SCOPES = [
   { id: 'core', name: '核心', description: '仅内置工具', includeTools: [] },
   { id: 'files', name: '+文件', description: '允许读写文件', includeTools: ['read', 'write', 'list'] },
@@ -703,7 +775,28 @@ async function handle(req, res) {
     const history = messages
       .filter((m) => m !== lastUser)
       .map((m) => ({ role: m.role, content: m.content }))
-    const agentBody = { message: lastUser ? lastUser.content : '', history, model: typeof body.model === 'string' ? body.model : '' }
+    const agentBody = {
+      message: lastUser ? lastUser.content : '',
+      history,
+      model: typeof body.model === 'string' ? body.model : '',
+    }
+    // Mirror resolve-studio's task resolution (agent.ts:394-395): the selected
+    // task's soul is the task-level system prompt, and the run-level
+    // systemPrompt the frontend computed (prompt template + memory) is appended
+    // after it. agent-httpd appends both onto its default agent prompt, so the
+    // model sees the business context this run is supposed to operate in.
+    const task = getTask(body.taskId)
+    const parts = []
+    if (task && task.systemPrompt) parts.push(task.systemPrompt)
+    if (typeof body.systemPrompt === 'string' && body.systemPrompt) {
+      parts.push(body.systemPrompt)
+    }
+    if (parts.length) agentBody.system = parts.join('\n\n---\n\n')
+    // Optional per-task tool allow-list (frontmatter `tools:`); absent/empty =
+    // expose all registered tools (resolve-studio's "no scope filter" fallback).
+    if (task && task.includeTools && task.includeTools.length) {
+      agentBody.tools = task.includeTools
+    }
     // The UI toggle picks the route: /react/api/pse always runs the three-role
     // orchestrator, /react/api/chat is the single ReAct agent (the container
     // runs with PSE_ENABLED=false so this route is genuinely non-PSE).
@@ -780,14 +873,28 @@ async function handle(req, res) {
 
   // ---- tasks ----
   if (p === '/api/tasks' && method === 'GET') {
-    return send(res, 200, { tasks: TASKS, scopes: SCOPES })
+    return send(res, 200, { tasks: buildTasks(), scopes: SCOPES })
   }
   if (p === '/api/tasks/match' && method === 'POST') {
     const body = await readBody(req)
     const msg = (body.message || '').toLowerCase()
-    // crude keyword match against task descriptions
-    const hit = TASKS.find((t) => t.id !== 'general' && msg.includes(t.id.replace('-', ' ')))
-    return send(res, 200, { id: hit ? hit.id : null, name: hit ? hit.name : null })
+    // Match against each task's id + triggers keywords (frontmatter `triggers:`);
+    // falls back to an id substring match for the meta tasks without triggers.
+    let best = null
+    let bestScore = 0
+    for (const t of buildTasks()) {
+      if (t.id === 'general') continue
+      let score = 0
+      if (msg.includes(t.id.replace(/-/g, ' '))) score += 1
+      for (const kw of (t.triggers || '').split(',').map((s) => s.trim()).filter(Boolean)) {
+        if (msg.includes(kw.toLowerCase())) score += 2
+      }
+      if (score > bestScore) {
+        bestScore = score
+        best = t
+      }
+    }
+    return send(res, 200, { id: best ? best.id : null, name: best ? best.name : null })
   }
 
   // ---- usage ----
