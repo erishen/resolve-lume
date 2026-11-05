@@ -1,0 +1,2 @@
+source=local-checkout(symlink → ../../lume/lume/bin/lume)
+bin=lume 0.12.2

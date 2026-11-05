@@ -134,18 +134,31 @@ tools-lume-check:
 	@node sidecar/consistency.js --check
 
 # ---- A2A peer 面(静态节点: resolve.* 只读摘要能力, 不带 agent 面) ----
-# 详见 peer_node.lume。Lume server 用工作树的完整版(../../lume/lume/bin/lume),
+# 详见 peer_node.lume。Lume server 用仓内 vendor/lume/bin/lume(make vendor/bootstrap
+# 由 scripts/vendor_lume_bin.sh 填充: 本地软链 ../../lume/lume/bin/lume, 单独 clone
+# 时从 GitHub pinned release 拉)。共享库 lume-core/ 是 git 子模块, 自包含、不用 vendor。
 # 与 work/lume/lume-lan 的 LUME_REPO_BIN 同型 —— ~/.local/bin/lume 是 agent-httpd
 # 版, 只出静态面, 不认 /peer/* 路由。PEER_* 从 .env 取; 日志落 .runtime/。
-LUME_SERVER ?= ../../lume/lume/bin/lume
+LUME_SERVER ?= vendor/lume/bin/lume
 PEER_PORT_RUN ?= $(shell grep -E '^PEER_PORT=' .env 2>/dev/null | cut -d= -f2 | head -1)
 ifeq ($(strip $(PEER_PORT_RUN)),)
 PEER_PORT_RUN := 18113
 endif
 
-peer-check:
+# ── vendor: 让 peer 面自带 framework 二进制, 不再依赖兄弟 checkout 的 ../../lume ──
+# 已在场就用, 缺失才拉。bin/ 不入库、.vendor-stamp 入库(见 .gitignore)。
+vendor:
+	@bash scripts/vendor_lume_bin.sh
+
+# 强制刷新(本地 checkout 改了、或想钉到另一个 pinned release 时用):
+#   make bootstrap            # 用默认版本刷新
+#   make bootstrap LUME_VERSION=v0.12.2  # 钉到指定 release
+bootstrap:
+	@bash scripts/vendor_lume_bin.sh
+
+peer-check: vendor
 	@if [ ! -x "$(LUME_SERVER)" ]; then \
-	  echo "✗ 找不到 $(LUME_SERVER)" >&2; exit 1; fi
+	  echo "✗ 找不到 $(LUME_SERVER) —— 先跑: make bootstrap" >&2; exit 1; fi
 	@$(LUME_SERVER) --check peer_node.lume
 
 # 后台起本节点 peer 端点。起完需在 lume-a2a 的 fleet 里加
