@@ -1,6 +1,12 @@
 # resolve-lume 便捷命令
 # 首次使用：make setup  （拉取 agent-httpd / lume-core 的 vendored 源码 + lume framework 二进制）
 
+# BUILDX_CONFIG 指向项目内缓存, 绕过 macOS/OrbStack 下 ~/.docker/buildx 的权限问题
+# (docker compose build 会报 rename .../activity/... operation not permitted)。
+# 用 ?= 默认值, shell 里若已 export BUILDX_CONFIG 则尊重之(CI 可覆盖)。
+BUILDX_CONFIG ?= $(CURDIR)/.data/buildx
+export BUILDX_CONFIG
+
 setup:
 	@bash scripts/vendor_repos.sh
 	@bash scripts/vendor_lume_bin.sh
