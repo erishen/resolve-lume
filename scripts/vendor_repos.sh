@@ -18,7 +18,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 AH_REPO="${AH_REPO:-erishen/agent-httpd}"
-AH_VER="${AH_VER:-v0.12.1}"
+AH_VER="${AH_VER:-v0.12.2}"
 LC_REPO="${LC_REPO:-erishen/lume-core}"
 LC_VER="${LC_VER:-v0.13.1}"
 
@@ -46,7 +46,7 @@ fetch() {
   echo "  $hint"
 }
 
-fetch "$AH_REPO" "$AH_VER" "$ROOT/agent-httpd" "agent-httpd: C 后端源码 (MCP_TEXT_MAX=32768 修复随 v0.12.1 入库)"
+fetch "$AH_REPO" "$AH_VER" "$ROOT/agent-httpd" "agent-httpd: C 后端源码 (per-request system 字段注入随 v0.12.2 入库; MCP_TEXT_MAX=32768 修复随 v0.12.1)"
 # lume-core 必须带 lib/peer.lume —— peer_node.lume 的 import "lume-core/lib/peer.lume" 依赖它。
 fetch "$LC_REPO" "$LC_VER" "$ROOT/lume-core" "lume-core: .lume 工具桥源码 (含 lib/peer.lume)"
 if [ ! -f "$ROOT/lume-core/lib/peer.lume" ]; then
