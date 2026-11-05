@@ -986,13 +986,13 @@
     },
     {
       "name": "make",
-      "description": "Run make targets in a host project. The workspace repo root is bind-mounted read-write at /workspace, so this executes `make -C <dir> [target] [KEY=VALUE...]` against real host files with a 5-minute timeout. Call target 'help' first to discover a project's targets (e.g. /workspace/<tools-dir>, /workspace/frameworks/autogen-pse). Targets that need docker-in-container or a GUI will fail visibly.",
+      "description": "Run make targets in a host project. The workspace repo root is bind-mounted read-write at /workspace, so this executes `make -C <dir> [target] [KEY=VALUE...]` against real host files with a 5-minute timeout. Call target 'help' first to discover a project's targets (e.g. /workspace/<project-dir>, /workspace/frameworks/<framework>). Targets that need docker-in-container or a GUI will fail visibly.",
       "parameters": {
         "type": "object",
         "properties": {
           "dir": {
             "type": "string",
-            "description": "Project directory under /workspace, e.g. /workspace/<tools-dir>"
+            "description": "Project directory under /workspace, e.g. /workspace/<project-dir>"
           },
           "target": {
             "type": "string",

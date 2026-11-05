@@ -23,9 +23,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ROOT = resolve-lume 仓库根
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-# REPO_ROOT = <workspace> 工作区根（ROOT/../../.. 三级上溯）。
+# REPO_ROOT = 私有工作区根（ROOT/../../.. 三级上溯）。
 # 注意：不是 ROOT/../..（那是 work/ 目录）。FS_ROOTS 里的 work/frameworks/personal/
-# <tools-dir> 都是 <workspace> 的直接子目录，必须三级上溯才能拼对。
+# <tools-dir> 都是私有工作区的直接子目录，必须三级上溯才能拼对。
 REPO_ROOT="$(cd "$ROOT/../../.." && pwd)"
 
 # ---------- 显式 env 白名单（绝不继承宿主全局脏值，以下变量全部本脚本自定） ----------
@@ -50,8 +50,18 @@ PSE_SOULS_DIR="$ROOT/souls"
 export PSE_SOULS_DIR
 
 # 文件工具允许读写的根（宿主真实绝对路径）：
-#   resolve-lume 自身的 souls / lume-tools，以及工作区四个兄弟目录
-FS_ROOTS="$ROOT/souls,$ROOT/lume-tools,$REPO_ROOT/work,$REPO_ROOT/frameworks,$REPO_ROOT/personal,$REPO_ROOT/<tools-dir>"
+#   resolve-lume 自身的 souls / lume-tools，以及工作区四个兄弟目录。
+# 兄弟目录名随私有工作区布局而定，用 FS_ROOTS_EXTRA 覆盖即可（默认取工作区
+# 根下的投资工具目录）；这里不写死具体目录名 —— 公开仓里不必暴露私有工作区
+# 的目录结构，而运行时行为不变。
+FS_ROOTS="$ROOT/souls,$ROOT/lume-tools,$REPO_ROOT/work,$REPO_ROOT/frameworks,$REPO_ROOT/personal"
+if [ -n "${FS_ROOTS_EXTRA:-}" ]; then
+  FS_ROOTS="$FS_ROOTS,$FS_ROOTS_EXTRA"
+else
+  for d in "$REPO_ROOT"/*/; do
+    [ -d "$d/apps" ] && FS_ROOTS="$FS_ROOTS,${d%/}"
+  done
+fi
 export FS_ROOTS
 
 # 工作区根（内置工具 cwd / 相对路径解析基准）

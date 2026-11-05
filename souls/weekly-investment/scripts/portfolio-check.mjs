@@ -14,19 +14,51 @@ import { runServer, truncate } from './lib-mcp.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
-// 从本文件逐级向上找含 <tools-dir>/apps/asset-lens 的仓库根，避免写死层级。
+// 从本文件逐级向上找 asset-lens 所在的项目根，避免写死层级。
 // 也可用环境变量 ASSET_LENS_DIR 显式指定。
+// 目录名不写死：私有工作区里承载这些 app 的目录名不进公开仓，所以按结构
+// 特征找 —— 某一级目录下的某个子目录里含 apps/<app>/Makefile。搜索时对
+// 「apps」直属本级、以及「某子目录/apps/<app>」两种形态都试，避免依赖
+// 中间那层目录的具体名字。
 function findAssetLens() {
   if (process.env.ASSET_LENS_DIR) return process.env.ASSET_LENS_DIR
   let dir = HERE
   for (let i = 0; i < 14; i++) {
-    const cand = join(dir, '<tools-dir>', 'apps', 'asset-lens')
-    if (fs.existsSync(join(cand, 'Makefile'))) return cand
+    const roots = [dir]
+    // 形如 <workspace>/<group>/apps/<app>：本级的某个子目录里再找 apps/
+    for (const entry of safeReaddir(dir)) {
+      const sub = join(dir, entry)
+      if (safeIsDir(sub)) roots.push(sub)
+    }
+    for (const root of roots) {
+      const apps = join(root, 'apps')
+      if (!safeIsDir(apps)) continue
+      for (const entry of safeReaddir(apps)) {
+        const cand = join(apps, entry)
+        if (fs.existsSync(join(cand, 'Makefile'))) return cand
+      }
+    }
     const up = dirname(dir)
     if (up === dir) break
     dir = up
   }
-  return join(HERE, '<tools-dir>', 'apps', 'asset-lens')
+  return join(HERE, 'apps', 'asset-lens')
+}
+
+function safeReaddir(p) {
+  try {
+    return fs.readdirSync(p)
+  } catch {
+    return []
+  }
+}
+
+function safeIsDir(p) {
+  try {
+    return fs.statSync(p).isDirectory()
+  } catch {
+    return false
+  }
 }
 
 const ASSET_LENS = findAssetLens()

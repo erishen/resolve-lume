@@ -16,13 +16,13 @@ COPY business-publish.js ./business-publish.js
 COPY business-misc.js ./business-misc.js
 
 # Toolchain for the `make` tool: host projects under /workspace are built via
-# their own Makefiles (uv/python for <tools-dir> & pse frameworks, pnpm for web
+# their own Makefiles (uv/python for investment-tool & pse frameworks, pnpm for web
 # projects). uv is pinned to the system python (UV_PYTHON_PREFERENCE=only-system)
 # so no managed-python downloads from github are needed in CN networks; pip and
 # corepack go through CN mirrors. Note: this layer needs network at build time.
 # 用 bookworm-slim (glibc) 而非 alpine(musl): 宿主 Python 项目的原生依赖
 # (如 matplotlib) 在 musl 下无预编译 wheel, uv 会回退源码编译, 而 sidecar 未装
-# C 编译器 → `make` 工具在 <tools-dir> 等真实项目上回归。实测见 memory 日志。
+# C 编译器 → `make` 工具在投资工具类真实项目上回归。实测见 memory 日志。
 RUN apt-get update \
   && apt-get install -y --no-install-recommends make git python3 python3-venv python3-pip ca-certificates curl \
   && rm -rf /var/lib/apt/lists/* \

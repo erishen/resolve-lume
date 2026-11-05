@@ -77,6 +77,22 @@ test('redactForExport drops the account name even on a short path', () => {
   assert.ok(out.includes('notes.md'), out)
 })
 
+// A shared log must not carry the private workspace ROOT. The last-3 rule
+// alone leaves it in place: `/Users/<me>/Workspace/CNB/<my-repo>/frameworks/x`
+// became `…/<my-repo>/frameworks/x`, naming the private workspace the logs
+// came from. The workspace-root segment must be dropped as well.
+test('redactForExport drops the private workspace root segment', () => {
+  const wsRoot = ['private', 'workspace', 'root'].join('-')
+  const out = redactForExport(`/Users/someone/Workspace/CNB/${wsRoot}/frameworks/crewai-pse`)
+  assert.ok(!out.includes(wsRoot), out)
+  assert.ok(out.endsWith('frameworks/crewai-pse'), out)
+})
+
+test('redactForExport keeps the tail of a non-workspace path intact', () => {
+  const out = redactForExport('/Users/example-user/projects/demo-workspace/.env')
+  assert.ok(out.endsWith('demo-workspace/.env'), out)
+})
+
 test('redactForExport masks common credential shapes', () => {
   const out = redactForExport(`key=${KEY} bearer=${BEARER} ghp=${GHP}`)
   assert.ok(!out.includes(KEY), out)

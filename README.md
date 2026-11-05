@@ -280,17 +280,17 @@ make sidecar-host-stop && make sidecar-host-start
   <key>ProgramArguments</key>
   <array>
     <string>/opt/homebrew/bin/node</string>
-    <string>/Users/&lt;you&gt;/Workspace/CNB/<workspace>/work/harness/resolve-lume/sidecar/launcher.js</string>
+    <string>/Users/&lt;you&gt;/&lt;repo-root&gt;/sidecar/launcher.js</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/&lt;you&gt;/Workspace/CNB/<workspace>/work/harness/resolve-lume</string>
+  <string>/Users/&lt;you&gt;/&lt;repo-root&gt;</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>LAUNCHER_AUTOSTART</key><string>1</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/Users/&lt;you&gt;/Workspace/CNB/<workspace>/work/harness/resolve-lume/.data-sidecar/launcher.log</string>
+  <key>StandardOutPath</key><string>/Users/&lt;you&gt;/&lt;repo-root&gt;/.data-sidecar/launcher.log</string>
 </dict>
 </plist>
 ```

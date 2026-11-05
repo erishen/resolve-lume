@@ -513,7 +513,7 @@ const LOCAL = {
   'stock-scan': async (a) => stockScan(a),
   make: async (a) => {
     const dir = String(a.dir || '').trim()
-    if (!dir) throw new Error('dir is required, e.g. /workspace/<tools-dir>')
+    if (!dir) throw new Error('dir is required, e.g. /workspace/<project-dir>')
     return runMake(dir, a.target, a.args)
   },
 }

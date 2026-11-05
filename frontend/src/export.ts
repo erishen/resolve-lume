@@ -21,11 +21,28 @@ export function redactForExport(s: string): string {
   // Keeping just the last 3 segments is NOT enough: a short path such as
   // `/Users/alice/notes.md` would still contain the account name. Drop the OS
   // prefix AND the account segment first, then cap the remaining tail.
+  //
+  // The last-3 rule alone still leaks the private workspace layout:
+  // `/Users/<me>/Workspace/CNB/<my-repo>/frameworks/crewai-pse` collapses to
+  // `…/<my-repo>/frameworks/crewai-pse` — and `<my-repo>` names the private
+  // workspace the logs came from. So after taking the tail, drop its first
+  // segment when that segment sits directly under a workspace-ish parent
+  // (Workspace / CNB / code / repos / …): that segment is the workspace
+  // ROOT, which is exactly the part a shared log must not carry.
+  const WS_ROOT_PARENTS = new Set([
+    'Workspace', 'workspace', 'CNB', 'cnblogs', 'code', 'Code', 'repos',
+    'repositories', 'Projects', 'projects', 'src', 'dev', 'work',
+  ])
   const collapse = (m: string, sep: '/' | '\\'): string => {
     const parts = m.split(sep === '/' ? '/' : /[\\/]/).filter(Boolean)
     const userIdx = parts.findIndex((p) => p === 'Users' || p === 'home')
     const tail = userIdx >= 0 ? parts.slice(userIdx + 2) : parts
     const shown = (tail.length ? tail : parts).slice(-3)
+    // Index of shown[0] inside `parts`, so we can inspect its parent segment.
+    const headIdx = parts.length - shown.length
+    if (shown.length > 1 && headIdx > 0 && WS_ROOT_PARENTS.has(parts[headIdx - 1])) {
+      return `…${sep}${shown.slice(1).join(sep)}`
+    }
     return `…${sep}${shown.join(sep)}`
   }
   return s
