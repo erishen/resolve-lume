@@ -197,4 +197,4 @@ frontend-build-check:
 check: tools-lume-check test-gateway frontend-test
 	@echo "✓ 工具桥生成约束 + 四处名单一致性 + 网关/SSE/导出回归测试全部通过"
 
-.PHONY: setup build up wait start down logs frontend-up sidecar-host-start sidecar-host-stop sidecar-host-status tools-lume tools-lume-check peer-check peer-serve test-gateway frontend-test frontend-build-check check
+.PHONY: setup build up wait start down logs frontend-up sidecar-host-start sidecar-host-stop sidecar-host-status tools-lume tools-lume-check vendor bootstrap peer-check peer-serve test-gateway frontend-test frontend-build-check check
