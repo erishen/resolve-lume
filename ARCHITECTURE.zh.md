@@ -196,6 +196,15 @@ PSE（Planner / Specialist / Evaluator）是 resolve-studio 的核心编排模�
 
 **`vendor/`**：peer 面自带的 `lume` 二进制（`vendor/lume/bin/lume`，二进制被 `.gitignore` 忽略、`.vendor-stamp` 入库），让 peer 节点不再依赖兄弟 checkout 的 `../../lume`。
 
+**构建上下文加固（`.dockerignore`）**
+
+仓库根与 `frontend/` 各有一份 `.dockerignore`，均排除 `.env` / `.env.*`：
+
+- `frontend/Dockerfile` 的 `runtime` 阶段用 `COPY . .` 把前端上下文整体拷入镜像。若本地开发不慎把 `.env` 留在 `frontend/` 下，会被一起烤进镜像层，造成凭据泄露——`.dockerignore` 将其挡在构建上下文之外。
+- 仓库根 `.dockerignore` 是纵深防御：`Dockerfile.backend` 当前只 `COPY` 指定目录，理论上不会烤根 `.env`；排除 `.env` 是为了防止未来有人把 backend 改成 `COPY . .` 时，本地 `.env` 被无意带进镜像。
+
+`.env` 在本机权限为 `0600` 且仅被 `.gitignore` 忽略（不入库）；`.env.example` 全为占位符。构建期密钥隔离与运行期 fail-closed token、凭据屏蔽共同构成三层防护（见第 8 节）。
+
 ---
 
 ## 8. 安全模型
@@ -212,6 +221,7 @@ PSE（Planner / Specialist / Evaluator）是 resolve-studio 的核心编排模�
 | 容器加固 | `no-new-privileges` + `cap_drop: ALL` + 最小基础镜像 |
 | 传输安全（SSE）| 全链路 `proxy_buffering off`，不截断长流 |
 | 会话 ID 熵源 | `agent-httpd` `session_id_new` 使用 **16 字节 OS 级随机数**（非 `rand()/time()` 等弱源），保证会话标识不可预测；缺失/失败走 fail-closed，不回落弱随机 |
+| 构建期密钥隔离 | 根与 `frontend/` 的 `.dockerignore` 排除 `.env` / `.env.*`，纵深防御 `COPY . .` 把本地密钥烤入镜像（详见第 7 节）|
 
 **部署注意**
 

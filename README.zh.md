@@ -168,6 +168,8 @@ npm run dev   # :5173
 - **`.env`**：`LLM_API_URL/LLM_API_KEY/LLM_MODEL` 走 OpenAI 兼容；`PSE_ENABLED` 已不再生效——
   PSE 由前端「🧩 PSE」开关控制（sidecar 据此把 `/api/chat` 转发到 `/react/api/pse` 或 `/react/api/chat`），
   容器的 `PSE_ENABLED` 固定为 `false`，否则普通 chat 路由也会被强制跑 PSE、开关失效。
+- **`.dockerignore`**：仓库根与 `frontend/` 均已排除 `.env` / `.env.*`，防止本地密钥被 `COPY . .` 烤入镜像
+  （dev 模式 `.env` 仅由 Vite 的 Node 侧读取、绝不进浏览器 bundle；详见 `ARCHITECTURE.zh.md` 第 7、8 节）。
 - **`souls/<role>/SOUL.md`**：改角色分工无需重建镜像（已 bind mount）。
 - **`lume-tools/tools.lume`**：用 `tool "name","desc",{params},(p)=>{...}` 定义工具；改完重启 backend 容器即可被 agent-httpd 重新 harvest。
 - **`deploy/mcp-servers.json`**：加 `"id"/"command"/"args"` 条目即可接入新 MCP server（如 git/memory/think）。

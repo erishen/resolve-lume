@@ -152,6 +152,7 @@ When probing localhost addresses, remember to use `curl --noproxy '*'`, otherwis
 ## Configuration
 
 - **`.env`**: `LLM_API_URL/LLM_API_KEY/LLM_MODEL` are OpenAI-compatible; `PSE_ENABLED` no longer takes effect—PSE is controlled by the frontend "🧩 PSE" switch (the sidecar forwards `/api/chat` to `/react/api/pse` or `/react/api/chat` accordingly), and the container's `PSE_ENABLED` is fixed to `false`, otherwise the normal chat route would also be forced through PSE and the switch would be useless.
+- **`.dockerignore`**: both the repo root and `frontend/` exclude `.env` / `.env.*`, preventing local secrets from being baked into the image by `COPY . .` (in dev mode `.env` is read only by Vite's Node side and never enters the browser bundle; see `ARCHITECTURE.zh.md` sections 7 and 8).
 - **`souls/<role>/SOUL.md`**: changing role division requires no image rebuild (already bind-mounted).
 - **`lume-tools/tools.lume`**: define tools with `tool "name","desc",{params},(p)=>{...}`; after editing, restart the backend container and agent-httpd will re-harvest them.
 - **`deploy/mcp-servers.json`**: add an `"id"/"command"/"args"` entry to plug in a new MCP server (e.g. git/memory/think).
