@@ -35,6 +35,9 @@ services:
       LLM_API_KEY: "${LLM_API_KEY:-}"
       LLM_MODEL: "${LLM_MODEL:-gpt-4o-mini}"
       LLM_SYSTEM_EXTRA: "${LLM_SYSTEM_EXTRA:-}"
+      # 最小模型白名单：聊天 UI 能下发的模型名必须在此列（逗号/空格分隔）。
+      # 留空=不限制。C 后端仅校验「前端 override」，LLM_MODEL 兜底不受限。
+      LLM_ALLOWED_MODELS: "${LLM_ALLOWED_MODELS:-}"
       # sidecar 工具代理（lume-tools/sidecar_ro.lume）的出站目标与凭据。
       # 变量名刻意避开 *_TOKEN：lume 的 env() 会把含 TOKEN/SECRET/API_KEY/PASSWORD
       # 的名字屏蔽成 null（lume-core builtins_fs.c:85-101），换个名字才读得到。
