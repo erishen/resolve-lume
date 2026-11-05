@@ -56,7 +56,9 @@ export function App() {
   const [skills, setSkills] = useState<SkillInfo[]>([])
   const [taskCatalog, setTaskCatalog] = useState<TaskCatalog>({ tasks: [], scopes: [] })
   const [pseEnabled, setPseEnabledState] = useState(false)
-  const [model, setModel] = useState<string>('')
+  const [model, setModel] = useState<string>(() =>
+    typeof window !== 'undefined' ? localStorage.getItem('harness-model') || '' : '',
+  )
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -91,6 +93,26 @@ export function App() {
     document.documentElement.dataset.theme = theme
     localStorage.setItem('harness-theme', theme)
   }, [theme])
+
+  // Persist the chosen model so the free/paid switch survives reloads.
+  useEffect(() => {
+    if (typeof window !== 'undefined' && model) localStorage.setItem('harness-model', model)
+  }, [model])
+
+  // Mirror the free/paid switch into the PSE provider: the paid model implies
+  // the deepseek provider, the free model implies the free provider. The
+  // sidecar applies this as the default for every PSE tool unless a tool call
+  // overrides it. No-op if the endpoint is unreachable.
+  useEffect(() => {
+    if (!model) return
+    const tier = models.find((m) => m.id === model)?.tier
+    const provider = tier === 'paid' ? 'deepseek' : 'free'
+    fetch('/api/pse-provider', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    }).catch(() => {})
+  }, [model, models])
 
   // ---- tool-layer lifecycle: poll status, start/stop handlers ----
   const refreshToolLayer = useCallback(async () => {
@@ -149,10 +171,15 @@ export function App() {
         setSkills(sk)
         setTaskCatalog(tasks)
         setPseEnabledState(pse.enabled)
+        // Prefer the user's last pick (persisted in localStorage) when it is
+        // still offered, else the backend default, else the first option.
+        const saved = typeof window !== 'undefined' ? localStorage.getItem('harness-model') : null
         const preferred =
-          m.defaultModel && m.models.some((x) => x.id === m.defaultModel)
-            ? m.defaultModel
-            : (m.models[0]?.id ?? '')
+          saved && m.models.some((x) => x.id === saved)
+            ? saved
+            : m.defaultModel && m.models.some((x) => x.id === m.defaultModel)
+              ? m.defaultModel
+              : (m.models[0]?.id ?? '')
         setModel(preferred)
       } catch (err) {
         if (!cancelled) setError(`failed to load runtime info: ${(err as Error).message}`)
@@ -593,7 +620,7 @@ export function App() {
                 >
                   {models.map((m) => (
                     <option key={m.id} value={m.id}>
-                      {m.id}
+                      {m.label ? `${m.label} · ${m.id}` : m.id}
                     </option>
                   ))}
                 </select>

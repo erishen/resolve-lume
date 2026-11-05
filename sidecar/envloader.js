@@ -41,6 +41,9 @@ const whitelist = [
   'LLM_API_URL',
   'LLM_API_KEY',
   'LLM_SYSTEM_EXTRA',
+  // free/paid model identifiers (UI 开关来源；可在 .env 覆盖)
+  'LLM_FREE_MODEL',
+  'LLM_PAID_MODEL',
   // PSE switch
   'PSE_ENABLED',
   // PSE framework roots

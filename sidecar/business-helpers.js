@@ -422,6 +422,20 @@ function stripAnsi(s) {
   return String(s).replace(/\u001b\[[0-9;]*m/g, '')
 }
 
+// ---- UI-controlled free/paid PSE provider preference ----
+// The chat UI's 免费/付费 switch doubles as the PSE provider selector: when the
+// user picks the paid model the sidecar sets this to 'deepseek', otherwise
+// 'free'. Every PSE tool uses it as its default provider unless the tool call
+// passes an explicit `provider`. Kept here (a module shared by all business
+// tools) so the sidecar HTTP layer and the tool implementations agree.
+let _pseProvider = process.env.PSE_REVIEW_PROVIDER === 'deepseek' ? 'deepseek' : 'free'
+function getPseProvider() {
+  return _pseProvider
+}
+function setPseProvider(p) {
+  _pseProvider = p === 'deepseek' ? 'deepseek' : 'free'
+}
+
 module.exports = {
   WORKSPACE_DIR,
   mapRepoAlias,
@@ -445,4 +459,6 @@ module.exports = {
   stripAnsi,
   cleanChildEnv,
   spawnCapture,
+  getPseProvider,
+  setPseProvider,
 }

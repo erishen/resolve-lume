@@ -28,6 +28,7 @@ try {
 const store = require('./store')
 const agent = require('./agent')
 const builtin = require('./builtin-exec')
+const H = require('./business-helpers')
 const { isSensitivePath, tokenMatches, MAX_PREVIEW_BYTES } = require('./security')
 
 // Guard against a stray PORT=0 / non-numeric value in the environment: Node
@@ -169,6 +170,24 @@ const memory = () => store.read('memory', { items: [] })
 const saveMemory = (m) => store.write('memory', m)
 const pseState = () => store.read('pse', { enabled: true })
 const savePse = (p) => store.write('pse', p)
+
+// UI-controlled free/paid PSE provider (mirrors pseState): the chat 免费/付费
+// switch sets this, and every PSE tool defaults to it unless the call passes an
+// explicit `provider`.
+const pseProviderState = () => store.read('pse-provider', { provider: H.getPseProvider() })
+const savePseProvider = (p) => {
+  H.setPseProvider(p.provider)
+  store.write('pse-provider', p)
+}
+// Restore the last UI choice on boot (defaults to PSE_REVIEW_PROVIDER env / 'free').
+;(() => {
+  try {
+    const s = pseProviderState()
+    H.setPseProvider(s.provider)
+  } catch {
+    /* store unavailable — keep env default */
+  }
+})()
 const mcpState = () => store.read('mcp', { servers: [] })
 const saveMcp = (m) => store.write('mcp', m)
 
@@ -662,6 +681,17 @@ async function handle(req, res) {
     savePse(st)
     return send(res, 200, { enabled: st.enabled })
   }
+  // ---- pse provider (free/paid) ----
+  if (p === '/api/pse-provider' && method === 'GET') {
+    return send(res, 200, pseProviderState())
+  }
+  if (p === '/api/pse-provider' && method === 'POST') {
+    const body = await readBody(req)
+    const provider = body.provider === 'deepseek' ? 'deepseek' : 'free'
+    const st = { provider }
+    savePseProvider(st)
+    return send(res, 200, st)
+  }
 
   // ---- gateway: chat / tools / tool/run -> agent-httpd ----
   if (p === '/api/chat' && method === 'POST') {
@@ -673,7 +703,7 @@ async function handle(req, res) {
     const history = messages
       .filter((m) => m !== lastUser)
       .map((m) => ({ role: m.role, content: m.content }))
-    const agentBody = { message: lastUser ? lastUser.content : '', history }
+    const agentBody = { message: lastUser ? lastUser.content : '', history, model: typeof body.model === 'string' ? body.model : '' }
     // The UI toggle picks the route: /react/api/pse always runs the three-role
     // orchestrator, /react/api/chat is the single ReAct agent (the container
     // runs with PSE_ENABLED=false so this route is genuinely non-PSE).
@@ -728,8 +758,19 @@ async function handle(req, res) {
 
   // ---- models ----
   if (p === '/api/models' && method === 'GET') {
-    const model = process.env.LLM_MODEL || 'gpt-4o-mini'
-    return send(res, 200, { models: [{ id: model, ownedBy: 'lume' }], defaultModel: model })
+    // Free/paid pair, both routed through the same llm-router gateway (model
+    // name selects the backend). Override the identifiers via LLM_FREE_MODEL /
+    // LLM_PAID_MODEL when a different gateway vocabulary is in use.
+    const free = process.env.LLM_FREE_MODEL || 'agnes-2.0-flash'
+    const paid = process.env.LLM_PAID_MODEL || 'deepseek-v4-flash'
+    const current = process.env.LLM_MODEL || paid
+    return send(res, 200, {
+      models: [
+        { id: free, ownedBy: 'lume', tier: 'free', label: '免费' },
+        { id: paid, ownedBy: 'lume', tier: 'paid', label: '付费' },
+      ],
+      defaultModel: current,
+    })
   }
 
   // ---- skills ----

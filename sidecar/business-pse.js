@@ -74,14 +74,14 @@ const HOT_NEWS_SOURCES = ['weibo', 'kr36', 'sspai', 'qbitai', 'infoq']
 const HOT_NEWS_PLATFORMS = ['xiaohongshu', 'zhihu', 'toutiao']
 
 module.exports = {
-  'pse-review': async function pseReview() {
+  'pse-review': async function pseReview(args) {
     let autogenPse
     try {
       autogenPse = H.resolvePseDir('autogen')
     } catch (e) {
       return `error: pse-review — ${e.message}`
     }
-    const provider = process.env.PSE_REVIEW_PROVIDER === 'deepseek' ? 'deepseek' : 'free'
+    const provider = (args && args.provider) || H.getPseProvider()
     const runEnv = buildRunEnv(provider)
     const prep = await H.runPseTask({
       tool: 'pse-review',
@@ -171,7 +171,7 @@ module.exports = {
   // Chinese article (bounded). Long pipeline: 30 min timeout.
   'article-write': async function articleWrite(args) {
     args = args || {}
-    const { project, publish = false, style, provider = 'free' } = args
+    const { project, publish = false, style, provider = H.getPseProvider() } = args
 
     let CREWAI_PSE
     try {
@@ -275,7 +275,7 @@ module.exports = {
   // Always --provider=<p>; noSync (deps preinstalled in the container venv).
   'resume-tailor': async function resumeTailor(args) {
     args = args || {}
-    const { mode, jd_text, provider = 'free' } = args
+    const { mode, jd_text, provider = H.getPseProvider() } = args
 
     if (mode === 'customize' && !(jd_text && jd_text.trim())) {
       return 'error: resume-tailor customize mode requires jd_text (Job Description content).'
@@ -335,7 +335,7 @@ module.exports = {
   // --llm --provider=<p>; count "### Qn" headings and report N/9.
   'interview-questions': async function interviewQuestions(args) {
     args = args || {}
-    const { mode = 'subject', subject = 'python', jd_text, resume_text, provider = 'free' } = args
+    const { mode = 'subject', subject = 'python', jd_text, resume_text, provider = H.getPseProvider() } = args
 
     if (mode === 'jd' && !(jd_text && jd_text.trim())) {
       return 'error: interview-questions jd mode requires jd_text (Job Description content).'
@@ -404,7 +404,7 @@ module.exports = {
   // ---- crm-task: one of three langgraph-pse personal-CRM pipelines ----
   'crm-task': async function crmTask(args) {
     args = args || {}
-    const { task, provider = 'free', api_base_url, db_path } = args
+    const { task, provider = H.getPseProvider(), api_base_url, db_path } = args
     const cfg = CRM_TASKS[task]
     if (!cfg) {
       return `error: unknown crm-task "${task}". Available: ${Object.keys(CRM_TASKS).join(', ')}`
@@ -465,7 +465,7 @@ module.exports = {
       news_dir,
       platform = 'xiaohongshu',
       category = 'tech_ai',
-      provider = 'free',
+      provider = H.getPseProvider(),
     } = args
 
     if (!(topic && topic.trim())) {

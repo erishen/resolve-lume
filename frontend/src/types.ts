@@ -90,6 +90,10 @@ export interface ToolSchema {
 export interface ModelInfo {
   id: string
   ownedBy?: string
+  /** 'free' | 'paid' tier for the free/paid UI switch (optional). */
+  tier?: 'free' | 'paid'
+  /** Human label shown in the dropdown (optional). */
+  label?: string
 }
 
 export interface ModelsResponse {
