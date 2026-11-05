@@ -44,6 +44,11 @@ deploy/mcp-bridge-node_modules/
 
 # vendor/lume/bin/lume: 由 make vendor / make bootstrap 填充(见 scripts/vendor_lume_bin.sh)。
 # framework 二进制不入库(体积大、无法 review); .vendor-stamp 入库(记录 bin 来源+版本)。
-# 共享库走 git 子模块 lume-core/, 不在这里。
 vendor/lume/bin/
+# agent-httpd / lume-core: 由 make vendor / make bootstrap 从 GitHub release 拉源码
+# (见 scripts/vendor_repos.sh)。原为 git 子模块, 现改为 vendored 同名目录(源码不入库、路径语义不变)。
+agent-httpd/
+lume-core/
 .vendor-dl.*/
+# docker buildx 缓存(由 BUILDX_CONFIG=$PWD/.data/buildx 生成, 绕过 home 目录权限)
+.data/buildx/

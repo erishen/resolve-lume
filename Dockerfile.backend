@@ -1,10 +1,9 @@
 # syntax=docker/dockerfile:1
 # resolve-lume 后端镜像。
-# 构建上下文 = 本仓库根：把 agent-httpd / lume-core 两个子模块一起打进镜像，
+# 构建上下文 = 本仓库根：把 agent-httpd / lume-core 两个 vendored 目录一起打进镜像，
 # 运行时把它们与 souls / lume-tools / .data 打包，最终只留两个二进制 + 配置。
 #
-# 依赖子模块已初始化：构建前先 `git submodule update --init --recursive`
-# （或用仓库根 Makefile 的 `make setup`）。
+# 依赖 vendored 源码已就位：构建前先 `make setup`（从 GitHub release 拉 agent-httpd / lume-core 源码）。
 
 # ---------- 阶段 1: 构建 agent-httpd (C) ----------
 FROM debian:bookworm-slim AS c-build

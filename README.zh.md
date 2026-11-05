@@ -53,7 +53,8 @@
 
 ```
 resolve-lume/
-├── .gitmodules              # agent-httpd / lume-core 两个子模块
+├── agent-httpd/             # vendored：GitHub release v0.12.1（C 后端）
+├── lume-core/              # vendored：GitHub release v0.13.1（.lume 工具桥）
 ├── docker-compose.yml       # backend + frontend 两容器（sidecar 是宿主进程，不经 compose）
 ├── Dockerfile.backend       # 多阶段：构建 agent-httpd + lume-core → debian 运行时
 ├── Makefile                 # setup / build / up / wait / start / down / logs
@@ -102,9 +103,9 @@ resolve-lume/
 ```bash
 cd work/harness/resolve-lume
 
-# 1. 初始化子模块（agent-httpd / lume-core）
+# 1. 拉取 vendored 依赖（agent-httpd v0.12.1 / lume-core v0.13.1，来自 GitHub release）
 make setup
-#    或：git submodule update --init --recursive
+#    或：bash scripts/vendor_repos.sh && bash scripts/vendor_lume_bin.sh
 
 # 2. 配置 LLM 网关（不填 key 也能跑：自动回落离线 demo 引擎）
 cp .env.example .env

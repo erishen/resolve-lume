@@ -3,3 +3,5 @@
 # future broad `COPY . .` can never bake the local secrets file into the image.
 .env
 .env.*
+# backend 构建不需要 frontend/ (含 ~74MB node_modules); frontend 服务用自身的 frontend/.dockerignore
+frontend/

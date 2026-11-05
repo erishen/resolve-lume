@@ -45,7 +45,8 @@ Browser ── :18085 ──► frontend container (node server-entrypoint.mjs)
 
 ```
 resolve-lume/
-├── .gitmodules              # two submodules: agent-httpd / lume-core
+├── agent-httpd/             # vendored: GitHub release v0.12.1 (C backend)
+├── lume-core/              # vendored: GitHub release v0.13.1 (.lume tools)
 ├── docker-compose.yml       # backend + frontend containers (sidecar is a host process, not via compose)
 ├── Dockerfile.backend       # multi-stage: build agent-httpd + lume-core → debian runtime
 ├── Makefile                 # setup / build / up / wait / start / down / logs
@@ -94,9 +95,9 @@ resolve-lume/
 ```bash
 cd work/harness/resolve-lume
 
-# 1. Initialize submodules (agent-httpd / lume-core)
+# 1. Pull vendored deps (agent-httpd v0.12.1 / lume-core v0.13.1 from GitHub release)
 make setup
-#    or: git submodule update --init --recursive
+#    or: bash scripts/vendor_repos.sh && bash scripts/vendor_lume_bin.sh
 
 # 2. Configure the LLM gateway (runs without a key too: auto-falls back to an offline demo engine)
 cp .env.example .env

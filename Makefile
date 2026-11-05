@@ -1,11 +1,9 @@
 # resolve-lume 便捷命令
-# 首次使用：make setup  （初始化 agent-httpd / lume-core 两个子模块）
+# 首次使用：make setup  （拉取 agent-httpd / lume-core 的 vendored 源码 + lume framework 二进制）
 
 setup:
-	@git submodule update --init --recursive 2>/dev/null || true
-	@test -d agent-httpd || git submodule add https://github.com/erishen/agent-httpd.git agent-httpd
-	@test -d lume-core || git submodule add https://github.com/erishen/lume-core.git lume-core
-	git submodule update --init --recursive
+	@bash scripts/vendor_repos.sh
+	@bash scripts/vendor_lume_bin.sh
 
 build: setup
 	docker compose build
@@ -136,7 +134,8 @@ tools-lume-check:
 # ---- A2A peer 面(静态节点: resolve.* 只读摘要能力, 不带 agent 面) ----
 # 详见 peer_node.lume。Lume server 用仓内 vendor/lume/bin/lume(make vendor/bootstrap
 # 由 scripts/vendor_lume_bin.sh 填充: 本地软链 ../../lume/lume/bin/lume, 单独 clone
-# 时从 GitHub pinned release 拉)。共享库 lume-core/ 是 git 子模块, 自包含、不用 vendor。
+# 时从 GitHub pinned release 拉)。agent-httpd/ 与 lume-core/ 也从 git 子模块改为
+# vendored 同名目录(由 scripts/vendor_repos.sh 从 GitHub release 拉源码, 见 vendor 目标)。
 # 与 work/lume/lume-lan 的 LUME_REPO_BIN 同型 —— ~/.local/bin/lume 是 agent-httpd
 # 版, 只出静态面, 不认 /peer/* 路由。PEER_* 从 .env 取; 日志落 .runtime/。
 LUME_SERVER ?= vendor/lume/bin/lume
@@ -145,16 +144,18 @@ ifeq ($(strip $(PEER_PORT_RUN)),)
 PEER_PORT_RUN := 18113
 endif
 
-# ── vendor: 让 peer 面自带 framework 二进制, 不再依赖兄弟 checkout 的 ../../lume ──
-# 已在场就用, 缺失才拉。bin/ 不入库、.vendor-stamp 入库(见 .gitignore)。
+# ── vendor: 拉 peer 面自带的全部外部依赖(framework 二进制 + agent-httpd/lume-core 源码) ──
+# 已在场就用, 缺失才拉。vendor/lume/bin/、agent-httpd/、lume-core/ 均不入库(见 .gitignore)。
 vendor:
+	@bash scripts/vendor_repos.sh
 	@bash scripts/vendor_lume_bin.sh
 
-# 强制刷新(本地 checkout 改了、或想钉到另一个 pinned release 时用):
-#   make bootstrap            # 用默认版本刷新
-#   make bootstrap LUME_VERSION=v0.12.2  # 钉到指定 release
+# 强制刷新(上游发了新版、或想钉到另一个 pinned release 时用):
+#   make bootstrap                                  # 用默认版本刷新
+#   make bootstrap LUME_VERSION=v0.12.2 AH_VER=v0.12.2  # 钉到指定 release
 bootstrap:
-	@bash scripts/vendor_lume_bin.sh
+	@FORCE=1 bash scripts/vendor_repos.sh
+	@FORCE=1 bash scripts/vendor_lume_bin.sh
 
 peer-check: vendor
 	@if [ ! -x "$(LUME_SERVER)" ]; then \

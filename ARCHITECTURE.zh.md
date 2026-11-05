@@ -192,7 +192,7 @@ PSE（Planner / Specialist / Evaluator）是 resolve-studio 的核心编排模�
 1. `build`：`node:24-bookworm-slim` 跑 `npm run build`（用 npmmirror 源）。
 2. `runtime`：同基础镜像，只拷 `dist/` + `server-entrypoint.mjs`（纯 Node 内置模块，**无需 `npm install`**——历史上的 `http-proxy` 是死依赖）。
 
-**`docker-compose.yml`**：编排 `backend` + `frontend` 两容器（均 `security_opt: no-new-privileges`、`cap_drop: ALL`、`restart: unless-stopped`、端口仅绑 `127.0.0.1`）。`sidecar` 不在 compose（宿主常驻）。`agent-httpd`、`lume-core` 作为 git submodule 参与构建。
+**`docker-compose.yml`**：编排 `backend` + `frontend` 两容器（均 `security_opt: no-new-privileges`、`cap_drop: ALL`、`restart: unless-stopped`、端口仅绑 `127.0.0.1`）。`sidecar` 不在 compose（宿主常驻）。`agent-httpd`、`lume-core` 作为 vendored 同名目录（从 GitHub release 拉源码）参与构建。
 
 **`vendor/`**：peer 面自带的 `lume` 二进制（`vendor/lume/bin/lume`，二进制被 `.gitignore` 忽略、`.vendor-stamp` 入库），让 peer 节点不再依赖兄弟 checkout 的 `../../lume`。
 
@@ -235,7 +235,7 @@ PSE（Planner / Specialist / Evaluator）是 resolve-studio 的核心编排模�
 - **未含**：job 持久化/续跑、前端外围面板、Python PSE 框架（两端共享外部依赖）。
 - **MCP 受限**：agent-httpd MCP 客户端无法握手 `node/npx server`，`memory`/`think` 用 stub 覆盖，仅 `lume-tools` 经 lume-core --mcp 生效。
 - **导出脱敏**：前端 `export.ts` 会剥除账户名、掩码凭据、截断 3000 字（含私有工作区根名剥离）。
-- **本地纪律**：项目遵循 "local commit only, no push"，多仓（resolve-lume + 子模块 agent-httpd / lume-core）协同提交后由用户显式决定推送。
+- **本地纪律**：项目遵循 "local commit only, no push"；`agent-httpd` / `lume-core` 已从 git 子模块改为 vendored 同名目录（从 GitHub release 拉源码），不再多仓协同提交。
 
 ---
 
@@ -248,4 +248,4 @@ PSE（Planner / Specialist / Evaluator）是 resolve-studio 的核心编排模�
 | 前端 React 聊天 UI | 同栈 Vite+React（`frontend/`）|
 | 后端原生工具集 | sidecar 内置工具（`builtin-exec.js`，9 真实现 + 占位）|
 | 直接对外 REST | 前端反代 + 宿主 sidecar 网关（fail-closed token）|
-| 单仓部署 | 主仓 + agent-httpd / lume-core 子模块 + 宿主 sidecar |
+| 单仓部署 | 主仓（含 vendored 的 agent-httpd / lume-core 同名目录） + 宿主 sidecar |

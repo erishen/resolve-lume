@@ -1,6 +1,0 @@
-[submodule "agent-httpd"]
-	path = agent-httpd
-	url = https://github.com/erishen/agent-httpd.git
-[submodule "lume-core"]
-	path = lume-core
-	url = https://github.com/erishen/lume-core.git
