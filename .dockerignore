@@ -1,0 +1,5 @@
+# Defense-in-depth for the backend build context (repo root). The backend
+# Dockerfile copies only specific directories today, but exclude .env so a
+# future broad `COPY . .` can never bake the local secrets file into the image.
+.env
+.env.*

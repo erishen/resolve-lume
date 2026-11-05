@@ -1,0 +1,5 @@
+# Never bake secrets into the frontend image. The build context is ./frontend
+# and `COPY . .` (frontend/Dockerfile:6) mirrors the whole directory, so any
+# local .env placed here would otherwise be shipped inside the container.
+.env
+.env.*

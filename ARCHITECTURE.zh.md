@@ -211,6 +211,7 @@ PSE（Planner / Specialist / Evaluator）是 resolve-studio 的核心编排模�
 | 凭据屏蔽 | `lume-core` 的 `env()` 屏蔽含 `TOKEN/SECRET/API_KEY/PASSWORD` 的变量名（因此 sidecar→backend 的工具代理变量刻意避开 `*_TOKEN`，改用 `SIDECAR_TOOLS_AUTH`）|
 | 容器加固 | `no-new-privileges` + `cap_drop: ALL` + 最小基础镜像 |
 | 传输安全（SSE）| 全链路 `proxy_buffering off`，不截断长流 |
+| 会话 ID 熵源 | `agent-httpd` `session_id_new` 使用 **16 字节 OS 级随机数**（非 `rand()/time()` 等弱源），保证会话标识不可预测；缺失/失败走 fail-closed，不回落弱随机 |
 
 **部署注意**
 
