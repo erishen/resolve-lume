@@ -57,6 +57,29 @@ function backendRequest(method, path, bodyBuffer, headers) {
 // `buf` tracks the text pending since the last phase/tool boundary. Only the
 // text after the LAST tool call is a legitimate answer; anything before it is
 // process narration and must not become `done.answer`.
+// When the run ends with an empty answer the old message ("工具已执行，但模型
+// 未返回总结；请重试") hid everything that actually happened and invited a
+// blind retry. 2026-11-06: 8 rounds, 1 article-write + 6 unrelated hot-news
+// calls, zero output — the user had no way to tell which tool failed.
+function emptyRunSummary(buf) {
+  const steps = buf.tools || []
+  const trace = steps.length
+    ? steps
+        .slice(-12)
+        .map((s) => (s.count > 1 ? `${s.name} ×${s.count}` : s.name))
+        .join(' → ')
+    : '无（模型未发起工具调用）'
+  const rounds = buf.roundMax ? `${buf.roundMax} 轮工具预算已用尽` : '本轮提前结束'
+  const lines = [
+    `⚠️ 本轮没有产生回答：${rounds}，模型在最后一次工具调用后没有输出任何正文。`,
+    `调用轨迹：${trace}`,
+    buf.lastError ? `最后错误：${buf.lastError}` : '最后错误：无（工具失败通常以普通文本返回，不会触发 error 帧；请展开 Thinking 查看工具结果）',
+    '请勿直接点重试：先看 Thinking 里最后一次工具的返回，确认它是失败还是超时。',
+    '若目标是生成文章，建议新建会话后直接说项目名（如「写 resolve-lume 的文章」），避免沿用这份已跑偏的上下文。',
+  ]
+  return lines.join('\n')
+}
+
 function translateFrame(json, buf) {
   const t = json.t
   const d = json.d
@@ -72,6 +95,18 @@ function translateFrame(json, buf) {
   }
   if (t === 'note') {
     const note = String(d || '')
+    // Collect the tool trajectory for emptyRunSummary(). Keep consecutive
+    // identical calls collapsed so 4 blind retries read as `hot-news ×4`.
+    if (/^tool /.test(note)) {
+      const m = /^tool\s+([A-Za-z0-9_.:-]+)/.exec(note)
+      const name = (m ? m[1] : '?').replace(/^sidecar__/, '')
+      const steps = buf.tools || (buf.tools = [])
+      const last = steps[steps.length - 1]
+      if (last && last.name === name) last.count += 1
+      else steps.push({ name, count: 1 })
+    }
+    const rm = /^round \d+\/(\d+)/.exec(note)
+    if (rm) buf.roundMax = Number(rm[1])
     const plannerStart = /^PSE cycle .* - Planner/.test(note)
     const evaluatorStart = /^PSE cycle .* - Evaluator/.test(note)
     const exhausted = /^PSE exhausted/.test(note)
@@ -106,6 +141,7 @@ function translateFrame(json, buf) {
   }
   if (t === 'error') {
     buf.error = String(d || 'unknown error')
+    buf.lastError = buf.error
     buf.pending = '' // the failed attempt's narration is not an answer
     return `event: error\ndata: ${JSON.stringify({ message: buf.error })}\n\n`
   }
@@ -119,7 +155,7 @@ function translateFrame(json, buf) {
       answer = `⚠️ 本次运行未完成：${buf.error}。请稍后重试，或在 .env 里切换 LLM_MODEL。`
     }
     if (!answer) {
-      answer = '⚠️ 工具已执行，但模型未返回总结；请重试。'
+      answer = emptyRunSummary(buf)
     }
     buf.text = answer
     return `event: done\ndata: ${JSON.stringify({ answer })}\n\n`
@@ -169,7 +205,10 @@ async function proxySSE(req, res, method, incomingPath, bodyBuffer) {
   if (isChatStream) res.on('close', releaseStream)
   // text: full delta stream (kept for callers that inspect it);
   // pending: only the text since the last tool/phase boundary (answer candidate).
-  const buf = { text: '', pending: '', answer: '', error: '', suppress: false }
+  const buf = {
+    text: '', pending: '', answer: '', error: '', suppress: false,
+    tools: [], roundMax: 0, lastError: '',
+  }
   let pending = ''
   resp.setEncoding('utf8')
   resp.on('data', (chunk) => {

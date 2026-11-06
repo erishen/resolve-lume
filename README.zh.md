@@ -207,6 +207,18 @@ agent-httpd 的 API 与 resolve-studio 的 `/api/*` **不同**：
   runId 关联要改 C 与 `.lume` 工具桥，属后续改造。进度帧同时会重置前端 5 分钟静默流
   看门狗，长跑不会被误杀。终帧 `done`/`error` 前会先 flush 完剩余进度。
   校验：`make check` 里的 `sidecar/progress.test.js`（13 例）。
+- **工具跑偏护栏（不选任务也生效）**：工具桥一次暴露 24 个跨 6 个业务域的工具，
+  而用户常态是 `taskMode=auto`（无任务 soul、无工具白名单）。11-06 实测：一次
+  「7 = 写文章」在 `article-write` 失败后，模型改跑 `hot-news` 全套并用**完全相同参数**
+  连跑 4 次耗尽 8 轮，最后连正文都没有。现在 `sidecar/chatBody.js` 给每次聊天常驻
+  注入工具纪律（单工具族 / 失败如实转达 / 禁止同参数重试 / 编号原样直传 / 必须给总结）；
+  `sidecar/toolGuard.js` 在 `/api/tools/call` 层拒绝「120s 内完全相同的失败调用」并
+  附上上次错误；`runPseTask` 统一校验 `--provider` 只认 `free`/`deepseek`，框架名
+  （如 `llamaindex-pse`）不再被静默拼进 Python 参数。C 侧 `agent.c` 的
+  stray-repeat guard 只在「该轮同时输出了正文」时生效，纯工具轮拦不住，所以这层放
+  sidecar。若最终仍无正文，`agent.js` 的 `done` 会输出工具轨迹（连续重复折叠成
+  `hot-news ×4`）+ 轮数 + 最后错误，不再只甩一句「请重试」。
+  校验：`chatBody.test.js`(4) / `toolGuard.test.js`(7) / `translateFrame.test.js`(7)。
 - **job 流是 GET + 带 seq 的追加日志**，因此可以自动重连：`streamJob` 指数退避
   （500ms→8s 封顶），每次重连先收 `snapshot`，`useJobs` 按 `seq` 去重；
   「连接中断，正在重连」会显示在面板状态里，终态快照到达即停止重连。

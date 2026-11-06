@@ -97,6 +97,39 @@ const cases = [
     want: ['你好，这是一次普通问答。'],
     avoid: ['⚠️'],
   },
+  {
+    // 2026-11-06 incident: article-write failed, model wandered into the
+    // hot-news pipeline and re-ran it 4 times, then ended with no text. The
+    // old "请重试" hid all of that and invited another identical retry.
+    name: 'exhausted tool rounds report the trajectory instead of a blind retry hint',
+    frames: [
+      { t: 'note', d: 'tool sidecar__article-write({"project": "resolve-lume"})' },
+      { t: 'note', d: 'round 2/8' },
+      { t: 'note', d: 'tool sidecar__hot-news-topics({"news_dir": "news"})' },
+      { t: 'note', d: 'round 3/8' },
+      { t: 'note', d: 'tool sidecar__hot-news({"topic": "x", "provider": "llamaindex-pse"})' },
+      { t: 'note', d: 'round 4/8' },
+      { t: 'note', d: 'tool sidecar__hot-news({"topic": "x", "provider": "llamaindex-pse"})' },
+      { t: 'note', d: 'round 5/8' },
+      { t: 'note', d: 'tool sidecar__hot-news({"topic": "x", "provider": "llamaindex-pse"})' },
+      { t: 'note', d: 'round 6/8' },
+      { t: 'note', d: 'tool sidecar__hot-news({"topic": "x", "provider": "llamaindex-pse"})' },
+      { t: 'note', d: 'round 8/8' },
+      { t: 'done' },
+    ],
+    want: ['8 轮工具预算已用尽', 'article-write', 'hot-news-topics', 'hot-news ×4', '调用轨迹', '请勿直接点重试'],
+    avoid: ['工具已执行，但模型未返回总结；请重试'],
+  },
+  {
+    name: 'explicit upstream error still wins over the empty-run summary',
+    frames: [
+      { t: 'note', d: 'tool sidecar__article-write({"project": "7"})' },
+      { t: 'error', d: 'upstream quota exhausted (HTTP 429)' },
+      { t: 'done' },
+    ],
+    want: ['⚠️ 本次运行未完成', '429'],
+    avoid: ['调用轨迹'],
+  },
 ]
 
 let failed = 0

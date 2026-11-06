@@ -30,6 +30,8 @@ const agent = require('./agent')
 const builtin = require('./builtin-exec')
 const H = require('./business-helpers')
 const progress = require('./progress')
+const toolGuard = require('./toolGuard')
+const { buildAgentChatBody } = require('./chatBody')
 const { isSensitivePath, tokenMatches, MAX_PREVIEW_BYTES } = require('./security')
 
 // Guard against a stray PORT=0 / non-numeric value in the environment: Node
@@ -784,35 +786,10 @@ async function handle(req, res) {
   // ---- gateway: chat / tools / tool/run -> agent-httpd ----
   if (p === '/api/chat' && method === 'POST') {
     const body = await readBody(req)
-    // resolve-studio frontend sends { messages:[{role,content}], model, ... };
-    // agent-httpd expects { message, history }. Translate the request shape.
-    const messages = Array.isArray(body.messages) ? body.messages : []
-    const lastUser = [...messages].reverse().find((m) => m.role === 'user')
-    const history = messages
-      .filter((m) => m !== lastUser)
-      .map((m) => ({ role: m.role, content: m.content }))
-    const agentBody = {
-      message: lastUser ? lastUser.content : '',
-      history,
-      model: typeof body.model === 'string' ? body.model : '',
-    }
-    // Mirror resolve-studio's task resolution (agent.ts:394-395): the selected
-    // task's soul is the task-level system prompt, and the run-level
-    // systemPrompt the frontend computed (prompt template + memory) is appended
-    // after it. agent-httpd appends both onto its default agent prompt, so the
-    // model sees the business context this run is supposed to operate in.
-    const task = getTask(body.taskId)
-    const parts = []
-    if (task && task.systemPrompt) parts.push(task.systemPrompt)
-    if (typeof body.systemPrompt === 'string' && body.systemPrompt) {
-      parts.push(body.systemPrompt)
-    }
-    if (parts.length) agentBody.system = parts.join('\n\n---\n\n')
-    // Optional per-task tool allow-list (frontmatter `tools:`); absent/empty =
-    // expose all registered tools (resolve-studio's "no scope filter" fallback).
-    if (task && task.includeTools && task.includeTools.length) {
-      agentBody.tools = task.includeTools
-    }
+    // Shape translation + task soul + always-on tool discipline live in
+    // chatBody.js (pure, unit-tested). Without the discipline a taskMode=auto
+    // run sees all 24 cross-domain tools with no task-level constraint.
+    const agentBody = buildAgentChatBody(body, getTask(body.taskId))
     // The UI toggle picks the route: /react/api/pse always runs the three-role
     // orchestrator, /react/api/chat is the single ReAct agent (the container
     // runs with PSE_ENABLED=false so this route is genuinely non-PSE).
@@ -855,6 +832,14 @@ async function handle(req, res) {
           error: `tool "${toolName}" is not exposed to the agent bridge; run it from the frontend tool panel (call capabilities for the full list)`,
         })
       }
+      // Refuse byte-identical repeats of a call that just failed. C's own
+      // stray-repeat guard misses pure tool rounds (no streamed content), which
+      // let a model burn 4 rounds re-launching the same hot-news pipeline.
+      const dup = toolGuard.check(toolName, toolArgs)
+      // Same shape as a normal tool error (`result`, not `error`): agent-httpd
+      // treats a JSON `error` field as a protocol failure and can drop the
+      // explanation from the model's context.
+      if (dup) return send(res, 200, { name: toolName, result: dup })
       // Conversational tool calls are a single blocking JSON POST — the C agent
       // emits no SSE frame while it waits. The chat SSE response is still open,
       // though, so mirror the child process log into that stream (see
@@ -871,9 +856,13 @@ async function handle(req, res) {
       }
       pub.finish()
       if (failed) {
-        return send(res, 200, { name: toolName, error: failed.message || 'tool execution failed' })
+        const outcome = { error: failed.message || 'tool execution failed' }
+        toolGuard.record(toolName, toolArgs, outcome)
+        return send(res, 200, { name: toolName, ...outcome })
       }
-      return send(res, 200, { name: toolName, result: String(text) })
+      const outcome = { result: String(text) }
+      toolGuard.record(toolName, toolArgs, outcome)
+      return send(res, 200, { name: toolName, ...outcome })
     }
     return agent.proxyJSON(req, res, 'POST', p, Buffer.from(JSON.stringify(body)))
   }

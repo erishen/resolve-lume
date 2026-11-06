@@ -296,6 +296,14 @@ async function runPseScript(opts) {
   return { ok: true, stdout: res.stdout, stderr: res.stderr, cwd }
 }
 
+// 所有 PSE 流水线只认这两个 provider（buildRunEnv 的分支也是按此写的）。
+// 模型常把框架名（llamaindex-pse）、中文风格名或 "default"/"medium" 塞进来，
+// 旧实现直接拼成 --provider=xxx，Python 侧静默失败、模型只会盲目重试。
+// 2026-11-06 实测 hot-news 连跑 4 次全是这个原因。article-write 已有自己的
+// 前置校验，这里统一兜住其余工具（hot-news / resume-tailor / interview-questions /
+// crm-task / pse-review）。
+const PSE_PROVIDER_NAMES = ['free', 'deepseek']
+
 // Run `<framework>/tasks/<task>/run.py` via uv (port of runPseTask).
 async function runPseTask(opts) {
   const {
@@ -311,6 +319,19 @@ async function runPseTask(opts) {
     noSync = false,
     onProgress,
   } = opts
+  const providerArg = args.find((a) => String(a).startsWith('--provider='))
+  if (providerArg) {
+    const value = String(providerArg).slice('--provider='.length)
+    if (!PSE_PROVIDER_NAMES.includes(value.toLowerCase())) {
+      return {
+        ok: false,
+        error:
+          `error: ${tool} 不支持 provider="${value}"；可选 ${PSE_PROVIDER_NAMES.join(' / ')}` +
+          '（省略则沿用宿主默认）。provider 只接受模型供应商标识，' +
+          '不要传框架名、中文风格名或 "default"。',
+      }
+    }
+  }
   let dir = taskDir
   let envName = PSE_FRAMEWORK_ENVS[framework]
   if (!dir) {
