@@ -450,6 +450,41 @@ function articleRunOutcome(stdout = '', stderr = '') {
   }
 }
 
+// ---- article project keys: 编号选择的唯一真相源 -------------------------
+// 11-06 事故：用户回「7」，模型却调 article-write({project:"lume-orbstack"})。
+// 三处清单互相冲突：article-discover 的 header 按 projects.json **插入顺序**
+// 编号、article-write 的候选清单按 Object.keys().sort() **字母序**编号、
+// article-discover dry-run 的扫描日志里还混着「未注册候选」项目名（如
+// lume-orbstack，可见性 unknown 被失败关闭跳过、从未写入 projects.json）。
+// 而 article-write 不支持数字编号，模型必须自己把「7」翻译成名字 —— 一旦
+// 拿错清单就会编出一个不存在于队列里的项目。
+// 现在各处共用同一份**插入顺序** key（用户已经看到的 1..7 就是这个顺序，
+// 7 = resolve-lume；改成字母序会让他已有的选择习惯失效），并让工具直接
+// 接收数字自行解析，模型不再需要翻译。
+function articleProjectKeys(crewaiPseDir) {
+  try {
+    const file = path.join(crewaiPseDir, 'tasks', 'project-articles', 'projects.json')
+    return Object.keys(JSON.parse(fs.readFileSync(file, 'utf8')))
+  } catch {
+    return []
+  }
+}
+
+function resolveArticleProject(value, keys) {
+  const s = String(value == null ? '' : value).trim()
+  if (/^\d+$/.test(s)) {
+    const idx = Number(s) - 1
+    if (idx >= 0 && idx < keys.length) return { ok: true, key: keys[idx] }
+    return { ok: false, reason: 'range', raw: s }
+  }
+  if (keys.includes(s)) return { ok: true, key: s }
+  return { ok: false, reason: 'unknown', raw: s }
+}
+
+function numberedProjectKeys(keys) {
+  return keys.map((k, i) => `${i + 1}. ${k}`).join('\n')
+}
+
 // ---- misc ----
 // Strip ANSI escape codes (Rich panels / colored logs).
 function stripAnsi(s) {
@@ -475,6 +510,9 @@ module.exports = {
   mapRepoAlias,
   sanitizeArticleFrontmatter,
   articleRunOutcome,
+  articleProjectKeys,
+  resolveArticleProject,
+  numberedProjectKeys,
   PSE_FRAMEWORK_ENVS,
   DEFAULT_RUN_TIMEOUT_MS,
   MAX_OUTPUT,

@@ -255,6 +255,78 @@ test('article-write rejects an unknown provider instead of silently using free',
   }
 })
 
+// ---- 7b. 编号选择串台（11-06：用户回「7」→ 未注册的 lume-orbstack）------
+test('article project numbering has one authoritative ordered list', () => {
+  const keys = H.articleProjectKeys(CREWAI_ROOT)
+  assert.ok(keys.length >= 7)
+  // 用户已经看到的清单是 projects.json 的插入顺序（7 = resolve-lume），
+  // 改成字母序会让既有选择习惯失效。
+  assert.deepEqual(keys, Object.keys(JSON.parse(fs.readFileSync(PROJECTS, 'utf8'))))
+  assert.equal(keys[6], 'resolve-lume')
+  assert.equal(H.resolveArticleProject('7', keys).key, 'resolve-lume')
+  assert.equal(H.resolveArticleProject('resolve-lume', keys).key, 'resolve-lume')
+  assert.equal(H.resolveArticleProject('99', keys).reason, 'range')
+  assert.equal(H.resolveArticleProject('lume-orbstack', keys).reason, 'unknown')
+  assert.match(H.numberedProjectKeys(keys), /^1\. /)
+})
+
+test('article-write resolves a numeric project choice itself', async () => {
+  const savedEnv = process.env.CREWAI_PSE_DIR
+  const savedRun = H.runPseTask
+  process.env.CREWAI_PSE_DIR = CREWAI_ROOT
+  let seenArgs = null
+  H.runPseTask = async (o) => {
+    seenArgs = o.args
+    return { ok: true, stdout: '中文已保存 → /a/zh.md\n', stderr: '' }
+  }
+  try {
+    const r = await PSE['article-write']({ project: '7' })
+    assert.match(r, /article generated/)
+    assert.deepEqual(seenArgs, [H.articleProjectKeys(CREWAI_ROOT)[6]])
+  } finally {
+    H.runPseTask = savedRun
+    if (savedEnv === undefined) delete process.env.CREWAI_PSE_DIR
+    else process.env.CREWAI_PSE_DIR = savedEnv
+  }
+})
+
+test('article-write explains unregistered discover candidates', async () => {
+  const savedEnv = process.env.CREWAI_PSE_DIR
+  const savedRun = H.runPseTask
+  process.env.CREWAI_PSE_DIR = CREWAI_ROOT
+  let spawned = false
+  H.runPseTask = async () => { spawned = true; return { ok: true, stdout: '', stderr: '' } }
+  try {
+    const r = await PSE['article-write']({ project: 'lume-orbstack' })
+    assert.match(r, /^error:/)
+    assert.match(r, /未注册候选/)
+    assert.match(r, /project="N"/)
+    assert.match(r, /1\. solo-chat/)
+    assert.equal(spawned, false)
+  } finally {
+    H.runPseTask = savedRun
+    if (savedEnv === undefined) delete process.env.CREWAI_PSE_DIR
+    else process.env.CREWAI_PSE_DIR = savedEnv
+  }
+})
+
+test('article-write rejects an out-of-range numeric choice', async () => {
+  const savedEnv = process.env.CREWAI_PSE_DIR
+  const savedRun = H.runPseTask
+  process.env.CREWAI_PSE_DIR = CREWAI_ROOT
+  let spawned = false
+  H.runPseTask = async () => { spawned = true; return { ok: true, stdout: '', stderr: '' } }
+  try {
+    const r = await PSE['article-write']({ project: '99' })
+    assert.match(r, /编号 99 超出范围/)
+    assert.equal(spawned, false)
+  } finally {
+    H.runPseTask = savedRun
+    if (savedEnv === undefined) delete process.env.CREWAI_PSE_DIR
+    else process.env.CREWAI_PSE_DIR = savedEnv
+  }
+})
+
 // ---- 8. generator self-check -------------------------------------------
 test('generator --check enforces the desc contract', () => {
   const out = execFileSync(process.execPath,

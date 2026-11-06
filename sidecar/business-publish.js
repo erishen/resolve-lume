@@ -134,7 +134,7 @@ function loadArticleKeys() {
   if (wp) {
     const dir = path.join(wp, 'articles', 'pse', 'zh')
     try {
-      for (const name of fs.readdirSync(dir)) {
+      for (const name of fs.readdirSync(dir).sort()) {
         const m = /^(.+?)-zh\.md$/.exec(name)
         if (!m) continue
         // 下划线 slug（resolve_tui）→ 连字符 project key（resolve-tui）
@@ -144,7 +144,9 @@ function loadArticleKeys() {
       // 目录不存在/不可读：仅用 json 队列
     }
   }
-  return [...keys].sort()
+  // 保持 projects.json 的插入顺序：编号 1..N 与 article-discover /
+  // article-write 的清单完全一致；额外文章按字母序追加在末尾。
+  return [...keys]
 }
 
 // spawnCapture failure shape: `error: <tool> exited with code <c>\n<last-500>`.
@@ -288,10 +290,14 @@ async function runArticleDiscover(args) {
   const projectLines = []
   try {
     const obj = JSON.parse(fs.readFileSync(projectsFile, 'utf8')) || {}
-    for (const [k, v] of Object.entries(obj)) {
-      const repo = (v && v.repo) || ''
-      const desc = String((v && v.desc) || '').replace(/\s+/g, ' ').slice(0, 80)
-      const src = (v && v.source_dir) || ''
+    // 顺序必须与 article-write 的候选清单完全一致。旧实现用插入顺序而
+    // article-write 用字母序，同一个「7」在两份清单里指向不同项目
+    //（11-06 实测串台）；现在统一为插入顺序，7 = resolve-lume。
+    for (const k of H.articleProjectKeys(CREWAI_PSE)) {
+      const v = obj[k] || {}
+      const repo = v.repo || ''
+      const desc = String(v.desc || '').replace(/\s+/g, ' ').slice(0, 80)
+      const src = v.source_dir || ''
       projectLines.push(`${k} — ${repo}：${desc}${src ? `（${src}）` : ''}`)
     }
   } catch {
@@ -304,7 +310,10 @@ async function runArticleDiscover(args) {
       ? projectLines.map((l, i) => `  ${i + 1}. ${l}`).join('\n') + '\n'
       : '  （空）\n') +
     `> ${add ? '已写入（含本次新增）' : 'dry-run（未写入，建议新增见下方日志）'}\n` +
-    `> ⚠️ 以上编号列表即为完整项目清单，直接呈现给用户即可，无需再 read-file。\n\n`
+    `> ⚠️ 以上编号列表即为完整项目清单，直接呈现给用户即可，无需再 read-file。\n` +
+    `> ⚠️ 编号与 article-write 的候选清单完全一致：用户回「7」时，直接给 article-write 传 project="7"，由工具自行解析，不要自己翻译成项目名。\n` +
+    (add ? '' : '> ⚠️ 下方扫描日志里出现的项目名都是【未注册候选】（可见性未确认为 public / 未写入 projects.json），不可直接用于 article-write。\n') +
+    '\n'
   if (add) {
     // 写入模式：projects.json 已含本次新增，header 即权威完整清单。
     // 不透传 discover 的扫描日志——它很长（扫描 79 个项目 + 建议清单），

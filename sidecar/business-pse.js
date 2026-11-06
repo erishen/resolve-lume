@@ -4,7 +4,6 @@
 // Remaining tools of this family live here too: article-write, resume-tailor,
 // interview-questions, crm-task, hot-news, hot-news-fetch, hot-news-topics,
 // hot-news-check, hot-news-publish.
-const fs = require('fs')
 const fsp = require('fs/promises')
 const path = require('path')
 const H = require('./business-helpers')
@@ -172,7 +171,7 @@ module.exports = {
   // Chinese article (bounded). Long pipeline: 30 min timeout.
   'article-write': async function articleWrite(args) {
     args = args || {}
-    const { project, publish = false, style, provider = H.getPseProvider() } = args
+    let { project, publish = false, style, provider = H.getPseProvider() } = args
     // 旧实现只判断 `provider !== 'deepseek'`，任何非法值都静默当 free 跑，
     // 模型传了 "medium" 也毫无反馈。与 style 一样改为明确拒绝。
     const prov = String(provider).toLowerCase()
@@ -188,30 +187,39 @@ module.exports = {
       return `error: ${e.message}`
     }
 
-    let projectKeys = []
-    try {
-      const raw = fs.readFileSync(
-        path.join(CREWAI_PSE, 'tasks', 'project-articles', 'projects.json'),
-        'utf8',
-      )
-      projectKeys = Object.keys(JSON.parse(raw)).sort()
-    } catch {
-      projectKeys = []
-    }
+    // 与 article-discover / article-validate 共用同一份插入顺序 key
+    //（见 H.articleProjectKeys）：用户看到的「7」始终指向同一个项目。
+    const projectKeys = H.articleProjectKeys(CREWAI_PSE)
 
     if (!project) {
       if (projectKeys.length === 0) {
         return 'error: no projects configured in crewai-pse projects.json.'
       }
       return (
-        'project 参数必填。可用项目见本工具的 project 枚举（crewai-pse projects.json 的 key）：\n' +
-        projectKeys.map((k, i) => `${i + 1}. ${k}`).join('\n') +
-        '\n\n请先让用户从中选一个，再带 project=<项目名> 调用本工具；不要反复不带 project 调用。'
+        'project 参数必填。以下是唯一权威的可写项目清单（1-based 编号，与 article-discover 返回的项目清单完全一致）：\n' +
+        H.numberedProjectKeys(projectKeys) +
+        '\n\n用户回复数字时，直接把数字原样传给本工具的 project（如 project="7"），工具会自行解析；' +
+        '不要自行把数字翻译成项目名，更不要引用 article-discover 扫描日志里的候选项目名（那些尚未注册）。' +
+        '\n\n请先让用户从中选一个，再带 project=<编号或项目名> 调用本工具；不要反复不带 project 调用。'
       )
     }
-    if (projectKeys.length > 0 && !projectKeys.includes(project)) {
-      return `error: unknown project "${project}". Available: ${projectKeys.join(', ')}`
+
+    const picked = H.resolveArticleProject(project, projectKeys)
+    if (projectKeys.length > 0 && !picked.ok) {
+      const why = picked.reason === 'range'
+        ? `编号 ${picked.raw} 超出范围（1-${projectKeys.length}）`
+        : `未知项目 "${picked.raw}"`
+      const candidateHint = picked.reason === 'unknown'
+        ? ' 若该名字来自 article-discover 的扫描日志，那是【未注册候选】' +
+          '（仓库可见性未确认为 public，未写入 projects.json），不能直接写文章；' +
+          '需先确认仓库公开并跑 article-discover(add=true) 注册。'
+        : ''
+      return `error: ${why}。${candidateHint}` +
+        `\n\n当前唯一可写清单：\n${H.numberedProjectKeys(projectKeys)}` +
+        '\n\n请按编号原样传 project="N"，或从上面挑一个项目名；不要猜名字。'
     }
+    // 数字编号在这里就地解析成项目名，后续 runArgs / 报错文案都用它。
+    if (picked.ok) project = picked.key
 
     const runArgs = [project]
     if (publish) runArgs.push('--publish')
