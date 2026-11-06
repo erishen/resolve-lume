@@ -73,6 +73,26 @@ function activeChatUserMessage() {
   return streams.values().next().value.userMessage || ''
 }
 
+/**
+ * User message of the MOST RECENTLY registered chat run; '' when none.
+ * Unlike activeChatUserMessage() this tolerates concurrent streams: the .lume
+ * bridge has no runId, but a tool call is causally downstream of the chat that
+ * triggered it, and for a single-operator local app that is the newest stream.
+ * Used by the publish-intent gate, where fail-closed on a second stream would
+ * wrongly reject an explicit "发布" (2026-11-06: user said 确认发布…, a second
+ * live stream made activeChatUserMessage() return '' and the gate blocked a
+ * legitimate publish). The progress BROADCAST still requires exactly one
+ * stream — logs of one chat must never leak into another.
+ */
+function latestChatUserMessage() {
+  if (streams.size === 0) return ''
+  let latest = null
+  for (const s of streams.values()) {
+    if (!latest || s.id > latest.id) latest = s
+  }
+  return (latest && latest.userMessage) || ''
+}
+
 /** Inject one progress line into the sole active chat stream. Returns false on skip. */
 function broadcastToActiveChat(text) {
   if (streams.size !== 1) return false
@@ -217,6 +237,7 @@ module.exports = {
   unregisterChatStream,
   activeChatStreamCount,
   activeChatUserMessage,
+  latestChatUserMessage,
   broadcastToActiveChat,
   currentEmit,
   runWithEmit,

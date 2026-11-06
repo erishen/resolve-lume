@@ -99,6 +99,29 @@ test('user message is readable only for the sole active stream', () => {
   assert.equal(P.activeChatUserMessage(), '')
 })
 
+// The publish-intent gate uses the NEWEST stream: a stale second live stream
+// must not blank out an explicit 「发布」 from the current chat (2026-11-06).
+test('latestChatUserMessage returns the newest stream message even with concurrent streams', () => {
+  const a = fakeRes()
+  const idA = P.registerChatStream(a, { userMessage: '列出清单' })
+  try {
+    assert.equal(P.latestChatUserMessage(), '列出清单')
+    const b = fakeRes()
+    const idB = P.registerChatStream(b, { userMessage: '确认发布 lume-a2a 文章' })
+    try {
+      assert.equal(P.latestChatUserMessage(), '确认发布 lume-a2a 文章')
+      // The broadcast correlation stays strict: two streams, never leak.
+      assert.equal(P.broadcastToActiveChat('x'), false)
+    } finally {
+      P.unregisterChatStream(idB)
+    }
+    assert.equal(P.latestChatUserMessage(), '列出清单')
+  } finally {
+    P.unregisterChatStream(idA)
+  }
+  assert.equal(P.latestChatUserMessage(), '')
+})
+
 test('a closed/destroyed response never receives progress', () => {
   const r = fakeRes()
   r.writableEnded = true

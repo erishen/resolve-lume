@@ -851,10 +851,14 @@ async function handle(req, res) {
       // article-publish on the bridge (2026-11-06): omit-confirm calls are
       // read-only (list queue / preview) and always allowed; confirm=true is a
       // REAL WordPress publish and needs the same explicit user intent as
-      // article-write publish=true. Without the current chat message in
-      // context (e.g. a bare bridge call) the intent check fails closed.
+      // article-write publish=true. Intent source is the newest live chat
+      // stream (latestChatUserMessage) — with a stale second stream the old
+      // sole-stream lookup returned '' and rejected an explicit 发布.
+      // With no chat stream at all it still fails closed.
+      const publishIntentMsg = progress.latestChatUserMessage()
+      console.log(`[publish-gate] tool=${toolName} confirm=${toolArgs && toolArgs.confirm} streams=${progress.activeChatStreamCount()} msg=${JSON.stringify(String(publishIntentMsg).slice(0, 60))}`)
       if (toolName === 'article-publish' && toolArgs && toolArgs.confirm === true &&
-          !hasExplicitPublishIntent(progress.activeChatUserMessage())) {
+          !hasExplicitPublishIntent(publishIntentMsg)) {
         return send(res, 200, {
           name: toolName,
           result:
