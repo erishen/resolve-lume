@@ -217,6 +217,7 @@ test-gateway:
 	@node sidecar/toolContract.test.js
 	@node sidecar/security.test.js
 	@node sidecar/consistency.test.js
+	@node sidecar/progress.test.js
 
 # 前端回归：Node >= 22.6 原生剥 TS 类型，零依赖、不碰运行中的服务。
 #  - export: 会话 Markdown / 单条复制 / JSON / job 日志都不带出主目录与密钥
@@ -237,6 +238,6 @@ shell-vars-check:
 
 # 一条命令跑完所有不依赖运行中服务的静态校验（改工具面 / 安全策略后跑这个）
 check: tools-lume-check test-gateway frontend-test shell-vars-check
-	@echo "✓ 工具桥生成约束 + 四处名单一致性 + 网关/SSE/导出回归 + shell 变量兼容检查全部通过"
+	@echo "✓ 工具桥生成约束 + 四处名单一致性 + 网关/SSE/进度/导出回归 + shell 变量兼容检查全部通过"
 
 .PHONY: setup build up wait start down logs frontend-up sidecar-host-start sidecar-host-stop sidecar-host-status sidecar-autostart-install sidecar-autostart-uninstall sidecar-autostart-restart sidecar-autostart-status tools-lume tools-lume-check vendor bootstrap peer-check peer-serve test-gateway frontend-test frontend-build-check shell-vars-check check

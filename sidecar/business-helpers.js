@@ -24,6 +24,7 @@ const path = require('path')
 const os = require('os')
 const { spawn } = require('child_process')
 const { unsafeMakeArgs } = require('./security')
+const progress = require('./progress')
 
 const WORKSPACE_DIR = process.env.WORKSPACE_DIR || '/workspace'
 
@@ -217,6 +218,10 @@ function cleanChildEnv(env) {
 
 async function spawnCapture(opts) {
   const { tool, cwd, cmdArgs, timeoutMs, maxOutput, env, onProgress } = opts
+  // Explicit onProgress wins; otherwise pick up the emitter that
+  // executeBuiltinTool() installed via AsyncLocalStorage. This is why no
+  // business tool has to be edited to opt into progress streaming.
+  const emit = typeof onProgress === 'function' ? onProgress : progress.currentEmit()
   let stdout = ''
   let stderr = ''
   let spawnErr = null
@@ -241,7 +246,7 @@ async function spawnCapture(opts) {
         stderr += text
         if (stderr.length > maxOutput) stderr = stderr.slice(-maxOutput)
       }
-      if (typeof onProgress === 'function') onProgress(text)
+      if (typeof emit === 'function') emit(text)
     }
     child.stdout.on('data', collect('stdout'))
     child.stderr.on('data', collect('stderr'))

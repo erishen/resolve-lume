@@ -410,6 +410,17 @@ export function useChat({ tools, model, sessionId, systemPrompt, onRunComplete }
             }
             break
           }
+          // /api/tool/run now streams child-process logs as `reasoning` frames.
+          // The chat path already handled them; direct tool runs used to drop
+          // them silently here (this switch has no default branch).
+          case 'reasoning': {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantId ? { ...m, reasoning: (m.reasoning ?? '') + ev.text } : m,
+              ),
+            )
+            break
+          }
           case 'done': {
             // Same guard as the streaming path above: never blank out text that
             // already arrived when the final `answer` comes back empty.

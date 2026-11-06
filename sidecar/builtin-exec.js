@@ -18,6 +18,7 @@ const { spawn } = require('child_process')
 // HTTP-service readers). Zero-dep; see business-helpers.js for shared runners.
 const { BUSINESS } = require('./builtin-business')
 const H = require('./business-helpers')
+const progress = require('./progress')
 const { isSensitivePath } = require('./security')
 
 const SOULS_DIR = process.env.PSE_SOULS_DIR || '/app/souls'
@@ -133,8 +134,17 @@ function runShell(command) {
     let stdout = ''
     let stderr = ''
     let settled = false
-    child.stdout.on('data', (c) => (stdout += c.toString()))
-    child.stderr.on('data', (c) => (stderr += c.toString()))
+    // These two runners spawn locally instead of going through H.spawnCapture,
+    // so pick up the same AsyncLocalStorage emitter to keep progress complete.
+    const emit = progress.currentEmit()
+    const collect = (isStdout) => (c) => {
+      const text = c.toString()
+      if (isStdout) stdout += text
+      else stderr += text
+      if (emit) emit(text)
+    }
+    child.stdout.on('data', collect(true))
+    child.stderr.on('data', collect(false))
     const finish = (code, signal) => {
       if (settled) return
       settled = true
@@ -444,8 +454,17 @@ function runMake(dir, target, extraArgs) {
     let stdout = ''
     let stderr = ''
     let settled = false
-    child.stdout.on('data', (c) => (stdout += c.toString()))
-    child.stderr.on('data', (c) => (stderr += c.toString()))
+    // These two runners spawn locally instead of going through H.spawnCapture,
+    // so pick up the same AsyncLocalStorage emitter to keep progress complete.
+    const emit = progress.currentEmit()
+    const collect = (isStdout) => (c) => {
+      const text = c.toString()
+      if (isStdout) stdout += text
+      else stderr += text
+      if (emit) emit(text)
+    }
+    child.stdout.on('data', collect(true))
+    child.stderr.on('data', collect(false))
     const finish = (code, signal) => {
       if (settled) return
       settled = true
@@ -544,7 +563,11 @@ const BUILTIN_TOOLS = ALL_SCHEMAS.filter((t) => !!LOCAL[t.name])
 const BUILTIN_NAMES = new Set(BUILTIN_TOOLS.map((t) => t.name))
 
 // Execute a built-in tool. Returns a result string. Throws on hard error.
-async function executeBuiltinTool(name, args) {
+// `onProgress` is optional: when present it is installed in an
+// AsyncLocalStorage context so every child process spawned anywhere below this
+// call (runPseTask / runPseScript / spawnCapture) streams its stdout as
+// progress without any business tool having to accept a callback.
+async function executeBuiltinTool(name, args, onProgress) {
   if (!LOCAL[name]) {
     const err = new Error(`unknown built-in tool: ${name}`)
     err.code = 'UNKNOWN_TOOL'
@@ -555,7 +578,7 @@ async function executeBuiltinTool(name, args) {
   // handler 之前就拒绝。统一在必填校验之前归一化，覆盖全部工具。
   const a = normalizeArgs(name, args)
   checkRequired(name, a)
-  const result = await LOCAL[name](a)
+  const result = await progress.runWithEmit(onProgress, () => LOCAL[name](a))
   // `error: ...` 会被 agent-httpd 判成协议失败(502)并从上下文丢弃，
   // 统一改写成普通文本，让模型能读到真正的失败原因。
   return normalizeToolError(result)

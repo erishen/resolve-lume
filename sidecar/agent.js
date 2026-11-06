@@ -8,6 +8,7 @@
 // ported frontend can consume lume's runtime unchanged.
 const http = require('http')
 const { URL } = require('url')
+const progress = require('./progress')
 
 const AGENT_URL = process.env.AGENT_HTTPD_URL || 'http://backend:8080'
 
@@ -158,6 +159,14 @@ async function proxySSE(req, res, method, incomingPath, bodyBuffer) {
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   })
+  // Long-running tools (article-write etc.) execute in a SEPARATE blocking
+  // /api/tools/call request while C emits nothing. Register this live chat
+  // response so progress.js can inject `reasoning` frames into it. Only
+  // conversational runs register — /api/tool/run owns its own SSE response.
+  const isChatStream = incomingPath === '/api/chat' || incomingPath === '/api/pse'
+  const streamId = isChatStream ? progress.registerChatStream(res) : null
+  const releaseStream = () => progress.unregisterChatStream(streamId)
+  if (isChatStream) res.on('close', releaseStream)
   // text: full delta stream (kept for callers that inspect it);
   // pending: only the text since the last tool/phase boundary (answer candidate).
   const buf = { text: '', pending: '', answer: '', error: '', suppress: false }
@@ -193,9 +202,13 @@ async function proxySSE(req, res, method, incomingPath, bodyBuffer) {
         }
       }
     }
+    releaseStream()
     res.end()
   })
-  resp.on('error', () => res.end())
+  resp.on('error', () => {
+    releaseStream()
+    res.end()
+  })
 }
 
 // Proxy a plain JSON request (tools list / tools/call) and echo the JSON.

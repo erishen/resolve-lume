@@ -29,6 +29,7 @@ const store = require('./store')
 const agent = require('./agent')
 const builtin = require('./builtin-exec')
 const H = require('./business-helpers')
+const progress = require('./progress')
 const { isSensitivePath, tokenMatches, MAX_PREVIEW_BYTES } = require('./security')
 
 // Guard against a stray PORT=0 / non-numeric value in the environment: Node
@@ -643,18 +644,33 @@ function runBuiltinSSE(res, name, args) {
     'X-Accel-Buffering': 'no',
   })
   const frame = (event, obj) => 'event: ' + event + '\n' + 'data: ' + JSON.stringify(obj) + '\n\n'
+  // Direct tool runs own their SSE response: progress frames go straight onto
+  // this `res` (no need for the chat-stream registry / broadcast).
+  const pub = progress.createProgressPublisher(
+    (text) => {
+      if (!res.writableEnded && !res.destroyed) res.write(frame('reasoning', { text }))
+    },
+    name,
+  )
   ;(async () => {
+    let text = ''
+    let failed = null
     try {
-      const text = await builtin.executeBuiltinTool(name, args)
+      text = await builtin.executeBuiltinTool(name, args, pub.push)
+    } catch (err) {
+      failed = err
+    }
+    // Terminal frames (delta/done/error) must be LAST: streamChat stops reading
+    // at `done`/`error`, so flush any buffered progress before writing them.
+    pub.finish()
+    if (!failed) {
       res.write(frame('delta', { text: String(text) }))
       res.write(frame('done', { answer: String(text) }))
-    } catch (err) {
-      if (err.code === 'UNKNOWN_TOOL') {
-        res.write(frame('delta', { text: '[' + name + '] 未注册' }))
-        res.write(frame('done', { answer: '' }))
-      } else {
-        res.write(frame('error', { message: err.message || 'tool execution failed' }))
-      }
+    } else if (failed.code === 'UNKNOWN_TOOL') {
+      res.write(frame('delta', { text: '[' + name + '] 未注册' }))
+      res.write(frame('done', { answer: '' }))
+    } else {
+      res.write(frame('error', { message: failed.message || 'tool execution failed' }))
     }
     res.end()
   })()
@@ -839,12 +855,25 @@ async function handle(req, res) {
           error: `tool "${toolName}" is not exposed to the agent bridge; run it from the frontend tool panel (call capabilities for the full list)`,
         })
       }
+      // Conversational tool calls are a single blocking JSON POST — the C agent
+      // emits no SSE frame while it waits. The chat SSE response is still open,
+      // though, so mirror the child process log into that stream (see
+      // progress.js for the single-active-stream correlation rule).
+      const pub = progress.createProgressPublisher(
+        progress.broadcastToActiveChat, toolName,
+      )
+      let text = ''
+      let failed = null
       try {
-        const text = await builtin.executeBuiltinTool(toolName, toolArgs)
-        return send(res, 200, { name: toolName, result: String(text) })
+        text = await builtin.executeBuiltinTool(toolName, toolArgs, pub.push)
       } catch (err) {
-        return send(res, 200, { name: toolName, error: err.message || 'tool execution failed' })
+        failed = err
       }
+      pub.finish()
+      if (failed) {
+        return send(res, 200, { name: toolName, error: failed.message || 'tool execution failed' })
+      }
+      return send(res, 200, { name: toolName, result: String(text) })
     }
     return agent.proxyJSON(req, res, 'POST', p, Buffer.from(JSON.stringify(body)))
   }

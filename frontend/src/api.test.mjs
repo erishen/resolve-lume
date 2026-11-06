@@ -105,6 +105,55 @@ await test('streamChat resolves on a normal done frame and forwards the signal',
   assert.deepEqual(events.map((e) => e.type), ['delta', 'done'])
 })
 
+await test('tool progress reasoning frames stream through without ending the run', async () => {
+  const events = []
+  await withFetch(
+    () =>
+      Promise.resolve(
+        sseResponse([
+          frame('reasoning', { text: '[article-write] Phase 1/4\n' }),
+          frame('reasoning', { text: '[article-write] Phase 2/4\n' }),
+          frame('delta', { text: 'answer' }),
+          frame('done', { answer: 'answer' }),
+        ]),
+      ),
+    () => streamChat([{ role: 'user', content: 'x' }], undefined, (e) => events.push(e)),
+  )
+  assert.deepEqual(events.map((e) => e.type), ['reasoning', 'reasoning', 'delta', 'done'])
+  assert.equal(events[0].text, '[article-write] Phase 1/4\n')
+  assert.equal(events[3].answer, 'answer')
+})
+
+await test('readFrames resets its idle watchdog on periodic progress frames', async () => {
+  // A 15-minute tool run must not be killed by the 5-min silent-stream guard:
+  // each progress frame re-arms the timer. Here 5 frames at 40ms with a
+  // 120ms idle budget would stall immediately if re-arming were missing.
+  let controller
+  const stream = new ReadableStream({
+    start(c) {
+      controller = c
+    },
+  })
+  const res = new Response(stream, {
+    status: 200,
+    headers: { 'Content-Type': 'text/event-stream' },
+  })
+  const seen = []
+  const done = readFrames(res, (f) => seen.push(f), {
+    idleTimeoutMs: 120,
+    shouldStop: () => seen.some((f) => f.includes('event: done')),
+  })
+  for (let i = 0; i < 5; i += 1) {
+    await new Promise((r) => setTimeout(r, 40))
+    controller.enqueue(enc.encode(frame('reasoning', { text: `phase ${i}\n` })))
+  }
+  controller.enqueue(enc.encode(frame('done', { answer: 'ok' })))
+  controller.close()
+  await done
+  assert.equal(seen.length, 6)
+  assert.match(seen.join(''), /phase 4/)
+})
+
 await test('streamChat settles on `done` even when the proxy never closes the socket', async () => {
   const events = []
   let cancelled = false

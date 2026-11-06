@@ -132,7 +132,7 @@ make sidecar-autostart-install
 #   make sidecar-autostart-restart    # launchd 模式下改了 sidecar/ 源码后重启
 #   make sidecar-autostart-uninstall  # 移除 launchd 托管并停掉 sidecar
 #   make down                 # 停两个容器（不影响宿主 sidecar）
-#   make check                # 静态校验：工具桥约束 + 四处名单一致性 + 网关/SSE/导出回归 + shell 变量兼容
+#   make check                # 静态校验：工具桥约束 + 四处名单一致性 + 网关/SSE/进度/导出回归 + shell 变量兼容
 #   make frontend-build-check  # 前端 tsc --noEmit + vite build（需 frontend/node_modules）
 
 # 5. 打开 http://127.0.0.1:18085
@@ -196,10 +196,21 @@ agent-httpd 的 API 与 resolve-studio 的 `/api/*` **不同**：
   连接会让「回答已经渲染完，输入框仍显示 Agent is thinking…」永久卡住（实测复现）。
   另设 `STREAM_IDLE_TIMEOUT_MS`（5 分钟）静默流兜底；`matchTask` 预检带 5s 超时并
   复用同一个 `AbortSignal`，避免卡在开跑之前。
+- **长跑工具的实时进度**：对话式工具调用（`agent-httpd → /api/tools/call`）是一次阻塞
+  JSON，C 侧等结果的十几分钟里不发任何 SSE 帧，`article-write` 因此像卡死。现在
+  `sidecar/progress.js` 建了一条进度总线：`agent.proxySSE` 注册当前聊天的 SSE `res`，
+  `executeBuiltinTool` 用 `AsyncLocalStorage` 把发射器透传到 `spawnCapture`（业务工具
+  无需改签名），子进程 stdout/stderr 经「按行拼接 → 剥 ANSI / 掩码凭据 → 700ms 节流 →
+  160 行配额」变成 `event: reasoning` 帧注入同一条流；前端 Thinking 区原本就消费
+  `reasoning`，协议零改动。`/api/tool/run` 则直接写自己的 SSE 响应。
+  **并发多个聊天时只在「恰好一个活跃流」时注入**，多流宁可不显示也不串台——精确的
+  runId 关联要改 C 与 `.lume` 工具桥，属后续改造。进度帧同时会重置前端 5 分钟静默流
+  看门狗，长跑不会被误杀。终帧 `done`/`error` 前会先 flush 完剩余进度。
+  校验：`make check` 里的 `sidecar/progress.test.js`（13 例）。
 - **job 流是 GET + 带 seq 的追加日志**，因此可以自动重连：`streamJob` 指数退避
   （500ms→8s 封顶），每次重连先收 `snapshot`，`useJobs` 按 `seq` 去重；
   「连接中断，正在重连」会显示在面板状态里，终态快照到达即停止重连。
-  校验：`make check` 里的 `frontend/src/api.test.mjs`（mock fetch 流，13 个用例）。
+  校验：`make check` 里的 `frontend/src/api.test.mjs`（mock fetch 流，15 个用例）。
 
 ## 已知限制 / 路线图
 
