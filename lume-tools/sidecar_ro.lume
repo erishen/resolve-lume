@@ -109,7 +109,7 @@ tool "article-discover", "Scan workspace repos for NEW article projects. add=fal
   return sidecar_tool("article-discover", stringify(p));
 };
 
-tool "article-validate", "VALIDATE article files only - never writes/publishes. project from enum; omit to list queue. Publishing is NOT exposed to you: say so.", {"project": "string", "confirm": "bool"}, (p) => {
+tool "article-validate", "VALIDATE article files only - never writes/publishes. project from enum; omit to list queue. Publishing IS available on this bridge via article-write (publish=true) or article-publish; this tool only validates, so never claim publishing is missing.", {"project": "string", "confirm": "bool"}, (p) => {
   return sidecar_tool("article-validate", stringify(p));
 };
 
