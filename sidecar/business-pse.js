@@ -207,7 +207,16 @@ module.exports = {
 
     const runArgs = [project]
     if (publish) runArgs.push('--publish')
-    if (style && ARTICLE_STYLE_NAMES.includes(style)) runArgs.push(`--style=${style}`)
+    if (style) {
+      const s = String(style).trim().toUpperCase()
+      // 旧实现把不认识的值静默丢掉 → 调用方以为指定了风格，实际回落到
+      // 自动轮转（A-K，可能又抽到出过跑题稿的 K 骨架流）。现在明确报错。
+      if (!ARTICLE_STYLE_NAMES.includes(s)) {
+        return `error: article-write 不支持 style="${style}"；可选 ${ARTICLE_STYLE_NAMES.join('/')}。` +
+          ' 框架的 G-K 骨架风格未对 UI 开放（程序化骨架 + 禁止 LLM 重写，容易产出通用议论文）。'
+      }
+      runArgs.push(`--style=${s}`)
+    }
 
     const res = await H.runPseTask({
       tool: 'article-write',
@@ -222,11 +231,26 @@ module.exports = {
     if (!res.ok) return res.error
 
     const { stdout, stderr } = res
-    const zhMatch = /中文已保存 →\s*(\S+)/.exec(stdout)
-    const enMatch = /英文已保存 →\s*(\S+)/.exec(stdout)
-    const zhPath = zhMatch ? zhMatch[1] : null
-    const enPath = enMatch ? enMatch[1] : null
+    const outcome = H.articleRunOutcome(stdout, stderr)
+    if (!outcome.ok) {
+      // run.py 隔离坏稿时 exit code 依旧是 0。绝不能走到下面的 "generated"
+      // 分支，否则模型会向用户谎报「文章已成功生成」（11-06 实测）。
+      const why = outcome.quarantined
+        ? '质量闸门未通过，稿件已隔离到 needs-review/，未翻译、未发布'
+        : '流水线未产出中文成品（缺少「中文已保存」marker）'
+      return H.truncate([
+        `error: article-write 未生成可发布文章（项目 ${project}）：${why}。`,
+        outcome.reason ? `> 隔离原因：${outcome.reason}` : '',
+        '> 请勿用相同参数立刻重试：先看 needs-review/*.reason.txt 的原因，' +
+        '或改用 style=B / style=D（非骨架写作流）后再生成。' +
+        ' 把本条错误如实转达用户，不要说「已成功生成」。',
+        '', '--- stdout tail ---', outcome.stdoutTail,
+        outcome.stderrTail.trim() ? `\n--- stderr tail ---\n${outcome.stderrTail}` : '',
+      ].filter(Boolean).join('\n'), H.MAX_OUTPUT)
+    }
 
+    const zhPath = outcome.zhPath
+    const enPath = outcome.enPath
     const parts = [`> crewai-pse article generated for project: **${project}**`]
     if (zhPath) parts.push(`> Chinese: ${zhPath}`)
     if (enPath) parts.push(`> English: ${enPath}`)

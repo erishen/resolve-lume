@@ -129,7 +129,88 @@ test('empty OPENAI_* / DEEPSEEK_* vars are stripped from child env', () => {
     'deepseek-v4-flash')
 })
 
-// ---- 7. generator self-check -------------------------------------------
+// ---- 7. article-write: quarantined runs must never look successful -------
+// Regression for 2026-11-06: crewai-pse gates off-topic drafts via
+// quarantine() + `return` (exit code 0, no zh marker). The sidecar used to
+// reply "article generated" and the agent happily told the user it succeeded.
+const PSE = require('./business-pse')
+const CREWAI_ROOT = path.resolve(path.dirname(PROJECTS), '../..')
+
+test('articleRunOutcome: a normal run with both markers is a success', () => {
+  const o = H.articleRunOutcome(
+    '✅ 中文已保存 → /a/zh.md\n✅ 英文已保存 → /a/en.md\n', '')
+  assert.equal(o.ok, true)
+  assert.equal(o.zhPath, '/a/zh.md')
+  assert.equal(o.enPath, '/a/en.md')
+  assert.equal(o.quarantined, false)
+})
+
+test('articleRunOutcome: quarantine with exit code 0 is a failure, reason kept', () => {
+  const o = H.articleRunOutcome([
+    '❌ 项目相关性不足（score=6 < 8），隔离待复核，不翻译',
+    '   已保存待复核 → /a/needs-review/resolve-lume.md',
+    '   隔离原因 → resolve-lume.reason.txt: 项目相关性不足（score=6 < 8）',
+  ].join('\n'), '')
+  assert.equal(o.ok, false)
+  assert.equal(o.quarantined, true)
+  assert.match(o.reason, /项目相关性不足/)
+})
+
+test('articleRunOutcome: a missing zh marker is a failure even with exit code 0', () => {
+  const o = H.articleRunOutcome('pipeline output, but no save marker\n', '')
+  assert.equal(o.ok, false)
+  assert.equal(o.quarantined, false)
+})
+
+test('articleRunOutcome: quarantine wins over a stale zh marker', () => {
+  const o = H.articleRunOutcome(
+    '中文已保存 → /a/zh.md\n   已保存待复核 → /a/needs-review/x.md\n', '')
+  assert.equal(o.ok, false)
+})
+
+test('article-write returns an error (never "generated") for a quarantined run', async () => {
+  const savedEnv = process.env.CREWAI_PSE_DIR
+  const savedRun = H.runPseTask
+  process.env.CREWAI_PSE_DIR = CREWAI_ROOT
+  H.runPseTask = async () => ({
+    ok: true,
+    stdout: '❌ 项目相关性不足，隔离待复核\n' +
+      '   已保存待复核 → /a/needs-review/x.md\n' +
+      '   隔离原因 → x.reason.txt: 项目相关性不足（score=6 < 8）\n',
+    stderr: '',
+  })
+  try {
+    const r = await PSE['article-write']({ project: 'resolve-lume' })
+    assert.match(r, /^error:/)
+    assert.match(r, /未生成可发布文章/)
+    assert.match(r, /项目相关性不足/)
+    assert.doesNotMatch(r, /article generated/)
+  } finally {
+    H.runPseTask = savedRun
+    if (savedEnv === undefined) delete process.env.CREWAI_PSE_DIR
+    else process.env.CREWAI_PSE_DIR = savedEnv
+  }
+})
+
+test('article-write rejects an unknown style instead of silently auto-rotating', async () => {
+  const savedEnv = process.env.CREWAI_PSE_DIR
+  const savedRun = H.runPseTask
+  process.env.CREWAI_PSE_DIR = CREWAI_ROOT
+  let spawned = false
+  H.runPseTask = async () => { spawned = true; return { ok: true, stdout: '', stderr: '' } }
+  try {
+    const r = await PSE['article-write']({ project: 'resolve-lume', style: 'K' })
+    assert.match(r, /^error:/)
+    assert.match(r, /不支持 style="K"/)
+    assert.equal(spawned, false)
+  } finally {
+    H.runPseTask = savedRun
+    if (savedEnv === undefined) delete process.env.CREWAI_PSE_DIR
+    else process.env.CREWAI_PSE_DIR = savedEnv
+  }
+})
+
+// ---- 8. generator self-check -------------------------------------------
 test('generator --check enforces the desc contract', () => {
   const out = execFileSync(process.execPath,
     [path.join(ROOT, 'deploy', 'gen-sidecar-tools.mjs'), '--check'],

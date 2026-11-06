@@ -416,6 +416,35 @@ async function latestHotNewsArticle(platform, hotNewsDir) {
   return null
 }
 
+// ---- article-write outcome detection ----
+// crewai-pse 的所有质量闸门（有效性 / 项目相关性 / 证据链 / 虚构引用）走
+// quarantine() 后 `return`：进程 exit code 仍是 0，且不会打印
+// 「中文已保存 →」marker。工具层若只看 exit code，就会把「零成品」回报成
+// 「文章已生成」——2026-11-06 的 resolve-lume 跑题稿正是这样被当成成品
+// 交付给用户的。这里把 stdout 解析成明确的成败判定，供 article-write 使用。
+const ZH_SAVED_RE = /中文已保存 →\s*(\S+)/
+const EN_SAVED_RE = /英文已保存 →\s*(\S+)/
+const QUARANTINE_RE = /(?:已保存待复核|隔离原因 →|隔离待复核|已隔离至 needs-review)/
+
+function articleRunOutcome(stdout = '', stderr = '') {
+  const out = String(stdout || '')
+  const zhPath = (ZH_SAVED_RE.exec(out) || [])[1] || null
+  const enPath = (EN_SAVED_RE.exec(out) || [])[1] || null
+  const quarantined = QUARANTINE_RE.test(out)
+  const reasons = out.match(/隔离原因 →[^\n]*/g) || []
+  const last = reasons.length ? reasons[reasons.length - 1] : ''
+  return {
+    ok: Boolean(zhPath) && !quarantined,
+    zhPath,
+    enPath,
+    quarantined,
+    // quarantine() 打印格式：「隔离原因 → <slug>.reason.txt: <理由>」
+    reason: last.replace(/^隔离原因 →\s*/, '').replace(/^[^:]+:\s*/, '').trim(),
+    stdoutTail: out.slice(-2000),
+    stderrTail: String(stderr || '').slice(-800),
+  }
+}
+
 // ---- misc ----
 // Strip ANSI escape codes (Rich panels / colored logs).
 function stripAnsi(s) {
@@ -440,6 +469,7 @@ module.exports = {
   WORKSPACE_DIR,
   mapRepoAlias,
   sanitizeArticleFrontmatter,
+  articleRunOutcome,
   PSE_FRAMEWORK_ENVS,
   DEFAULT_RUN_TIMEOUT_MS,
   MAX_OUTPUT,
