@@ -85,10 +85,14 @@ test('preview cap is bounded', () => {
 test('agent tool allowlist is generated and excludes high-risk tools', () => {
   const B = require('./builtin-exec')
   assert.ok(B.AGENT_TOOL_ALLOW.size >= 20, 'run `make tools-lume` to regenerate the bridge')
-  for (const n of ['article-write', 'capabilities', 'read-file']) {
+  for (const n of ['article-write', 'article-publish', 'capabilities', 'read-file']) {
     assert.ok(B.AGENT_TOOL_ALLOW.has(n), `${n} should be exposed to the agent`)
   }
-  for (const n of ['shell', 'write-file', 'article-publish', 'hot-news-publish']) {
+  // article-publish IS on the bridge since 2026-11-06, but confirm=true (the
+  // real WordPress publish) is gated server-side in server.js by
+  // hasExplicitPublishIntent — omit-confirm calls stay read-only (list/preview).
+  // shell / write-file / hot-news-publish remain fully unreachable.
+  for (const n of ['shell', 'write-file', 'hot-news-publish']) {
     if (B.BUILTIN_NAMES.has(n)) {
       assert.ok(!B.AGENT_TOOL_ALLOW.has(n), `${n} must NOT be reachable from /api/tools/call`)
     }

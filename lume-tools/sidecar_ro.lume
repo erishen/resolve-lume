@@ -109,12 +109,16 @@ tool "article-discover", "Scan workspace repos for NEW article projects. add=fal
   return sidecar_tool("article-discover", stringify(p));
 };
 
-tool "article-validate", "VALIDATE article files only - never writes/publishes. project from enum; omit to list queue. Publishing IS available on this bridge via article-write (publish=true) or article-publish; this tool only validates, so never claim publishing is missing.", {"project": "string", "confirm": "bool"}, (p) => {
+tool "article-validate", "VALIDATE only, never publishes. project MUST be from enum (NEVER invent names like wordpress); omit project to list queue.", {"project": "string", "confirm": "bool"}, (p) => {
   return sidecar_tool("article-validate", stringify(p));
 };
 
 tool "article-write", "Write article? Call DIRECTLY with project=KEY; NEVER read files or guess paths first. Omit project to list candidates. ONE article per call.", {"project": "string", "publish": "bool", "style": "string", "provider": "string"}, (p) => {
   return sidecar_tool("article-write", stringify(p));
+};
+
+tool "article-publish", "Publish ONE article to WordPress. Omit project = LIST queue (read-only). confirm=true REALLY publishes: only on explicit user publish request.", {"project": "string", "confirm": "bool"}, (p) => {
+  return sidecar_tool("article-publish", stringify(p));
 };
 
 tool "skill-run", "Load a SOUL.md skill by name (planner/specialist/evaluator). article-write is a TOOL not a skill: call that tool with project=KEY.", {"name": "string", "skill": "string"}, (p) => {
@@ -157,7 +161,6 @@ tool "capabilities", "Ask FIRST for publish/make/shell/PSE-review or \"is X avai
 //   juejin-publish
 //   wechat-draft
 //   sf-pw-publish
-//   article-publish
 //   article-archive
 //   hot-news-publish
 //   make

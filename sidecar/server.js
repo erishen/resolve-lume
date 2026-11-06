@@ -848,6 +848,22 @@ async function handle(req, res) {
             '这不是「出现了一个小问题」，也不是需要用户做选择题的情况。',
         })
       }
+      // article-publish on the bridge (2026-11-06): omit-confirm calls are
+      // read-only (list queue / preview) and always allowed; confirm=true is a
+      // REAL WordPress publish and needs the same explicit user intent as
+      // article-write publish=true. Without the current chat message in
+      // context (e.g. a bare bridge call) the intent check fails closed.
+      if (toolName === 'article-publish' && toolArgs && toolArgs.confirm === true &&
+          !hasExplicitPublishIntent(progress.activeChatUserMessage())) {
+        return send(res, 200, {
+          name: toolName,
+          result:
+            'tool error: confirm=true 会真正发布到 WordPress（外部副作用），' +
+            '用户当前消息并未明确说「发布 / 上线 / publish」，已拒绝执行。' +
+            '先用不带 confirm 的调用做预览并向用户转达，等用户明确同意发布后，' +
+            '再带 confirm=true 只针对那一篇 project 调用。',
+        })
+      }
       // Refuse byte-identical repeats of a call that just failed. C's own
       // stray-repeat guard misses pure tool rounds (no streamed content), which
       // let a model burn 4 rounds re-launching the same hot-news pipeline.

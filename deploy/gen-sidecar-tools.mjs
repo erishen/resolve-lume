@@ -40,11 +40,19 @@ const OUT_DEFAULT = path.join(ROOT, 'lume-tools', 'sidecar_ro.lume')
 // 生成工具，只能 read-file/analyze-code-dir 去猜仓库路径，最后得出「网关没
 // 挂载 article-write」的错误结论。article-write 默认 publish=false，且 schema
 // 明确禁止在调用前读文件，暴露它反而消除了那几轮无效的文件探查。
+//
+// 例外（2026-11-06）：article-publish 挂上。UI 示例与用户习惯都是「让聊天
+// agent 列待发布清单/发布」，但桥面没有它，模型只能说「工具不存在」再幻觉
+// 补救（2026-11-06 20:53 实录：编造 project="wordpress" + 推荐不相干的
+// post-comment skill）。安全性由 server.js /api/tools/call 的门禁兜底：
+// 无 confirm = 清单/预览（只读）；confirm=true 真发布，必须命中
+// hasExplicitPublishIntent（用户当前消息明确说 发布/上线/publish）。
 const DEFAULT_ALLOW = [
   'echo', 'calculator', 'read-file', 'analyze-dir', 'analyze-code-dir',
   'doc-library-search', 'photo-duplicates', 'video-library-list', 'privacy-audit',
   'stock-scan', 'dev-stats', 'hot-news', 'hot-news-fetch', 'hot-news-topics',
   'hot-news-check',   'article-discover', 'article-validate', 'article-write',
+  'article-publish',
   'skill-run', 'pick-post', 'resume-tailor', 'interview-questions', 'system-info',
   'capabilities',
 ]
@@ -139,7 +147,9 @@ const DESC_OVERRIDE = {
   'article-discover':
     'Scan workspace repos for NEW article projects. add=false = dry-run (default writes projects.json). Returns its path: NEVER read-file to find it.',
   'article-validate':
-    'VALIDATE article files only - never writes/publishes. project from enum; omit to list queue. Publishing is NOT exposed to you: say so.',
+    'VALIDATE only, never publishes. project MUST be from enum (NEVER invent names like wordpress); omit project to list queue.',
+  'article-publish':
+    'Publish ONE article to WordPress. Omit project = LIST queue (read-only). confirm=true REALLY publishes: only on explicit user publish request.',
   'pick-post':
     'Pick one published WordPress post at random (read-only). Requires ERISHEN_BASE in .env.',
   'resume-tailor':
