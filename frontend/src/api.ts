@@ -36,11 +36,17 @@ export async function fetchTasks(): Promise<TaskCatalog> {
 /** Match a user message against the task registry (returns the hit id/name). */
 export async function matchTask(
   message: string,
+  signal?: AbortSignal,
 ): Promise<{ id: string | null; name: string | null }> {
+  // Best-effort pre-flight. Without a timeout, a hung gateway wedges the
+  // composer BEFORE the chat stream even starts: `busy` is only cleared in
+  // useChat's finally, which never runs while this await is pending.
+  const timeout = AbortSignal.timeout(5000)
   const res = await fetch('/api/tasks/match', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message }),
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   })
   if (!res.ok) throw new Error(`tasks/match failed: ${res.status}`)
   return (await res.json()) as { id: string | null; name: string | null }
@@ -395,12 +401,16 @@ export async function streamToolRun(
 
   let terminal = false
   try {
-    await readFrames(res, (frame) => {
-      const parsed = parseFrame(frame)
-      if (!parsed) return
-      if (parsed.type === 'done' || parsed.type === 'error') terminal = true
-      onEvent(parsed)
-    })
+    await readFrames(
+      res,
+      (frame) => {
+        const parsed = parseFrame(frame)
+        if (!parsed) return
+        if (parsed.type === 'done' || parsed.type === 'error') terminal = true
+        onEvent(parsed)
+      },
+      { shouldStop: () => terminal, idleTimeoutMs: STREAM_IDLE_TIMEOUT_MS },
+    )
   } catch (err) {
     if ((err as Error)?.name === 'AbortError' || signal?.aborted) return
     throw err
@@ -421,9 +431,10 @@ export async function fetchModels(): Promise<{ models: ModelInfo[]; defaultModel
 /**
  * Stream a chat run as Server-Sent Events.
  *
- * `onEvent` is called for every agent event. The underlying fetch stream is
- * kept open until the run completes or errors. Pass an `AbortSignal` (from an
- * `AbortController`) to support a "Stop" button — aborting ends the stream
+ * `onEvent` is called for every agent event. The promise settles as soon as a
+ * terminal `done`/`error` frame arrives (or the server closes the stream, or
+ * the idle watchdog fires) — NOT only on HTTP EOF. Pass an `AbortSignal` (from
+ * an `AbortController`) to support a "Stop" button — aborting ends the stream
  * without throwing.
  */
 export async function streamChat(
@@ -447,12 +458,16 @@ export async function streamChat(
 
   let terminal = false
   try {
-    await readFrames(res, (frame) => {
-      const parsed = parseFrame(frame)
-      if (!parsed) return
-      if (parsed.type === 'done' || parsed.type === 'error') terminal = true
-      onEvent(parsed)
-    })
+    await readFrames(
+      res,
+      (frame) => {
+        const parsed = parseFrame(frame)
+        if (!parsed) return
+        if (parsed.type === 'done' || parsed.type === 'error') terminal = true
+        onEvent(parsed)
+      },
+      { shouldStop: () => terminal, idleTimeoutMs: STREAM_IDLE_TIMEOUT_MS },
+    )
   } catch (err) {
     // Aborting is an expected stop path, not an error — swallow it so the UI
     // just stops receiving events instead of showing a red error.
@@ -601,41 +616,99 @@ export const INCOMPLETE_STREAM_MESSAGE =
   '连接中断：未收到完成事件，结果可能不完整（已保留已收到的内容）'
 
 /**
+ * POST chat/tool streams are one-shot: a `done`/`error` frame means the run is
+ * over. HTTP EOF is NOT a reliable end-of-run signal — a proxy can hold the
+ * socket open (keep-alive), or a sidecar restart can leave the response
+ * dangling. `useChat` clears `busy` only in `send`'s finally, so waiting for
+ * EOF used to leave the answer fully rendered while the composer stayed stuck
+ * at "Agent is thinking…". Chat/tool-run therefore treat a terminal frame as
+ * EOF (`shouldStop`) and carry a silent-stream watchdog as a second net.
+ */
+export const STREAM_IDLE_TIMEOUT_MS = 5 * 60 * 1000
+export const STREAM_STALLED_MESSAGE =
+  '连接长时间无响应，已停止等待；已收到的内容已保留，可重新提问'
+
+export interface ReadFramesOptions {
+  /** Return true once a terminal SSE event arrived: stop reading at once. */
+  shouldStop?: () => boolean
+  /** Cancel a silent stream after this many ms; 0/undefined disables it. */
+  idleTimeoutMs?: number
+}
+
+/**
  * Read an SSE response body frame-by-frame, flushing a trailing partial frame
  * when the stream closes. Shared by chat / tool-run / job streams so the
  * buffering rules (blank-line delimiter, UTF-8 streaming, tail flush) live in
  * exactly one place.
  */
-async function readFrames(res: Response, onFrame: (frame: string) => void): Promise<void> {
+export async function readFrames(
+  res: Response,
+  onFrame: (frame: string) => void,
+  options: ReadFramesOptions = {},
+): Promise<void> {
   const reader = res.body!.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  let stalled = false
+  let idleTimer: ReturnType<typeof setTimeout> | undefined
+
+  const armIdle = () => {
+    if (!options.idleTimeoutMs) return
+    if (idleTimer) clearTimeout(idleTimer)
+    idleTimer = setTimeout(() => {
+      stalled = true
+      // Resolves a pending read() with done:true so the loop can exit instead
+      // of waiting forever on a connection that stopped producing frames.
+      void reader.cancel().catch(() => {})
+    }, options.idleTimeoutMs)
+  }
+  const stopNow = () => reader.cancel().catch(() => {})
+
   try {
-    while (true) {
+    armIdle()
+    let eof = false
+    while (!eof) {
       const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
+      if (done) eof = true
+      else {
+        armIdle()
+        buffer += decoder.decode(value, { stream: true })
+      }
       let sep: number
       while ((sep = buffer.indexOf('\n\n')) !== -1) {
         const frame = buffer.slice(0, sep)
         buffer = buffer.slice(sep + 2)
         onFrame(frame)
+        if (options.shouldStop?.()) {
+          await stopNow()
+          return
+        }
+      }
+      if (eof) {
+        const tail = buffer.trim()
+        if (tail) {
+          onFrame(tail)
+          if (options.shouldStop?.()) {
+            await stopNow()
+            return
+          }
+        }
       }
     }
+    if (stalled) throw new Error(STREAM_STALLED_MESSAGE)
   } catch (err) {
     // Release the underlying socket on abort / network failure; otherwise the
     // browser keeps a dangling fetch connection until the server notices.
     await reader.cancel().catch(() => {})
     throw err
   } finally {
+    if (idleTimer) clearTimeout(idleTimer)
     try {
       reader.releaseLock()
     } catch {
       /* already released */
     }
   }
-  const tail = buffer.trim()
-  if (tail) onFrame(tail)
 }
 
 /** A reconnect backoff wait that resolves immediately when aborted. */

@@ -9,7 +9,9 @@ import {
   streamChat,
   streamToolRun,
   streamJob,
+  readFrames,
   INCOMPLETE_STREAM_MESSAGE,
+  STREAM_STALLED_MESSAGE,
 } from './api.ts'
 
 let passed = 0
@@ -37,6 +39,25 @@ function sseResponse(frames) {
       start(controller) {
         for (const f of frames) controller.enqueue(enc.encode(f))
         controller.close()
+      },
+    }),
+    { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+  )
+}
+
+/**
+ * A Response that emits frames but NEVER closes the HTTP stream. Reproduces the
+ * "answer rendered, composer still says Agent is thinking…" incident: a proxy
+ * keeping the socket open (or a sidecar restart leaving it dangling).
+ */
+function openEndedResponse(frames, onCancel) {
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        for (const f of frames) controller.enqueue(enc.encode(f))
+      },
+      cancel() {
+        onCancel?.()
       },
     }),
     { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
@@ -82,6 +103,104 @@ await test('streamChat resolves on a normal done frame and forwards the signal',
   )
   assert.equal(seenSignal, ac.signal)
   assert.deepEqual(events.map((e) => e.type), ['delta', 'done'])
+})
+
+await test('streamChat settles on `done` even when the proxy never closes the socket', async () => {
+  const events = []
+  let cancelled = false
+  await withFetch(
+    () =>
+      Promise.resolve(
+        openEndedResponse(
+          [frame('delta', { text: '已更新' }), frame('done', { answer: '已更新' })],
+          () => {
+            cancelled = true
+          },
+        ),
+      ),
+    async () => {
+      const outcome = await Promise.race([
+        streamChat([{ role: 'user', content: 'x' }], undefined, (e) => events.push(e)).then(
+          () => 'resolved',
+        ),
+        new Promise((r) => setTimeout(() => r('HUNG'), 300)),
+      ])
+      // If this hangs, useChat's finally never runs and busy stays true forever.
+      assert.equal(outcome, 'resolved')
+    },
+  )
+  assert.deepEqual(events.map((e) => e.type), ['delta', 'done'])
+  assert.equal(cancelled, true, 'the dangling socket must be released')
+})
+
+await test('streamToolRun also settles on `done` without HTTP EOF', async () => {
+  let cancelled = false
+  await withFetch(
+    () =>
+      Promise.resolve(
+        openEndedResponse([frame('done', { answer: 'ok' })], () => {
+          cancelled = true
+        }),
+      ),
+    async () => {
+      const outcome = await Promise.race([
+        streamToolRun('echo', {}, () => {}).then(() => 'resolved'),
+        new Promise((r) => setTimeout(() => r('HUNG'), 300)),
+      ])
+      assert.equal(outcome, 'resolved')
+    },
+  )
+  assert.equal(cancelled, true)
+})
+
+await test('streamChat settles on `error` frame with the socket still open', async () => {
+  const events = []
+  await withFetch(
+    () => Promise.resolve(openEndedResponse([frame('error', { message: '429' })])),
+    async () => {
+      const outcome = await Promise.race([
+        streamChat([], undefined, (e) => events.push(e)).then(() => 'resolved'),
+        new Promise((r) => setTimeout(() => r('HUNG'), 300)),
+      ])
+      assert.equal(outcome, 'resolved')
+    },
+  )
+  assert.deepEqual(events.map((e) => e.type), ['error'])
+})
+
+await test('readFrames gives up on a silent stream when idleTimeoutMs elapses', async () => {
+  const res = new Response(new ReadableStream({ start() {} }), { status: 200 })
+  let err
+  try {
+    await readFrames(res, () => {}, { idleTimeoutMs: 30 })
+  } catch (e) {
+    err = e
+  }
+  assert.equal(err?.message, STREAM_STALLED_MESSAGE)
+})
+
+await test('readFrames tail frame still terminates a one-shot stream', async () => {
+  const frames = []
+  const res = new Response(
+    new ReadableStream({
+      start(c) {
+        // No trailing \n\n: only the EOF tail flush can deliver this frame.
+        c.enqueue(enc.encode(`event: done\ndata: ${JSON.stringify({ answer: 'ok' })}`))
+        c.close()
+      },
+    }),
+    { status: 200 },
+  )
+  let terminal = false
+  await readFrames(
+    res,
+    (f) => {
+      frames.push(f)
+      if (f.startsWith('event: done')) terminal = true
+    },
+    { shouldStop: () => terminal },
+  )
+  assert.equal(frames.length, 1)
 })
 
 await test('streamChat reports an incomplete stream instead of silently truncating', async () => {

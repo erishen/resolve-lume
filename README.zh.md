@@ -190,10 +190,16 @@ agent-httpd 的 API 与 resolve-studio 的 `/api/*` **不同**：
   （重发会重跑整个 Agent、重复烧 token）；流结束却没收到 `done`/`error` 时显式报
   「连接中断，结果可能不完整」，已收到的内容保留。Stop 按钮的 `AbortSignal` 对聊天与
   工具重试流都生效，并会主动 `reader.cancel()` 释放连接。
+- **终止帧即 EOF（别等 HTTP EOF）**：`done`/`error` 到达时 `readFrames` 立刻
+  `reader.cancel()` 并让 `streamChat` resolve。`useChat` 只在 `send` 的 `finally` 里
+  `setBusy(false)`，若把解禁绑在 HTTP EOF 上，反代 keep-alive / sidecar 重启留下的悬空
+  连接会让「回答已经渲染完，输入框仍显示 Agent is thinking…」永久卡住（实测复现）。
+  另设 `STREAM_IDLE_TIMEOUT_MS`（5 分钟）静默流兜底；`matchTask` 预检带 5s 超时并
+  复用同一个 `AbortSignal`，避免卡在开跑之前。
 - **job 流是 GET + 带 seq 的追加日志**，因此可以自动重连：`streamJob` 指数退避
   （500ms→8s 封顶），每次重连先收 `snapshot`，`useJobs` 按 `seq` 去重；
   「连接中断，正在重连」会显示在面板状态里，终态快照到达即停止重连。
-  校验：`make check` 里的 `frontend/src/api.test.mjs`（mock fetch 流，8 个用例）。
+  校验：`make check` 里的 `frontend/src/api.test.mjs`（mock fetch 流，13 个用例）。
 
 ## 已知限制 / 路线图
 

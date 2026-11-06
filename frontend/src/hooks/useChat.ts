@@ -152,13 +152,17 @@ export function useChat({ tools, model, sessionId, systemPrompt, onRunComplete }
         // Ask the server which task (if any) this message maps to so the UI
         // can surface the matched professional tool-set. The server re-resolves
         // authoritatively during the run; this is only for display. Best-effort:
-        // a failure just leaves the indicator cleared.
+        // a failure just leaves the indicator cleared. Pass the run's signal so
+        // Stop also aborts this pre-flight: a hung /api/tasks/match used to
+        // wedge `busy` before the chat stream even started.
         try {
-          const hit = await matchTask(text)
+          const hit = await matchTask(text, ac.signal)
           setActiveTask(hit.id ? { id: hit.id, name: hit.name ?? hit.id } : null)
         } catch {
           setActiveTask(null)
         }
+        // Returning here still runs the finally below (busy -> false).
+        if (ac.signal.aborted) return
 
         await streamChat(
           history,
