@@ -229,8 +229,14 @@ frontend-test:
 frontend-build-check:
 	@cd frontend && npm run typecheck && npm run build
 
-# 一条命令跑完所有不依赖运行中服务的静态校验（改工具面 / 安全策略后跑这个）
-check: tools-lume-check test-gateway frontend-test
-	@echo "✓ 工具桥生成约束 + 四处名单一致性 + 网关/SSE/导出回归测试全部通过"
+# macOS /bin/bash 3.2 在 UTF-8 下会把 $VAR 后面的中文首字节吃进变量名，
+# 例如 "pid=$old（连带" 会在 set -u 下报 old\xEF: unbound variable 直接退出。
+# 变量一律写 ${VAR}；这条静态规则防止中文提示语把脚本写崩（bash 5 / LC_ALL=C 不复现）。
+shell-vars-check:
+	@node scripts/check-shell-vars.cjs
 
-.PHONY: setup build up wait start down logs frontend-up sidecar-host-start sidecar-host-stop sidecar-host-status sidecar-autostart-install sidecar-autostart-uninstall sidecar-autostart-restart sidecar-autostart-status tools-lume tools-lume-check vendor bootstrap peer-check peer-serve test-gateway frontend-test frontend-build-check check
+# 一条命令跑完所有不依赖运行中服务的静态校验（改工具面 / 安全策略后跑这个）
+check: tools-lume-check test-gateway frontend-test shell-vars-check
+	@echo "✓ 工具桥生成约束 + 四处名单一致性 + 网关/SSE/导出回归 + shell 变量兼容检查全部通过"
+
+.PHONY: setup build up wait start down logs frontend-up sidecar-host-start sidecar-host-stop sidecar-host-status sidecar-autostart-install sidecar-autostart-uninstall sidecar-autostart-restart sidecar-autostart-status tools-lume tools-lume-check vendor bootstrap peer-check peer-serve test-gateway frontend-test frontend-build-check shell-vars-check check

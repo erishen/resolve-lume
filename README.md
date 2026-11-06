@@ -124,7 +124,7 @@ make sidecar-autostart-install
 #   make sidecar-autostart-restart    # restart after changing sidecar/ sources
 #   make sidecar-autostart-uninstall  # remove launchd residency and stop sidecar
 #   make down                 # stop the two containers (does not affect host sidecar)
-#   make check                # static checks: tool-bridge constraints + four-list consistency + gateway/SSE/export regressions
+#   make check                # static checks: tool-bridge constraints + four-list consistency + gateway/SSE/export regressions + shell var compat
 #   make frontend-build-check  # frontend tsc --noEmit + vite build (requires frontend/node_modules)
 
 # 5. Open http://127.0.0.1:18085

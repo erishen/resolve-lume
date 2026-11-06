@@ -132,7 +132,7 @@ make sidecar-autostart-install
 #   make sidecar-autostart-restart    # launchd 模式下改了 sidecar/ 源码后重启
 #   make sidecar-autostart-uninstall  # 移除 launchd 托管并停掉 sidecar
 #   make down                 # 停两个容器（不影响宿主 sidecar）
-#   make check                # 静态校验：工具桥约束 + 四处名单一致性 + 网关/SSE/导出回归
+#   make check                # 静态校验：工具桥约束 + 四处名单一致性 + 网关/SSE/导出回归 + shell 变量兼容
 #   make frontend-build-check  # 前端 tsc --noEmit + vite build（需 frontend/node_modules）
 
 # 5. 打开 http://127.0.0.1:18085
