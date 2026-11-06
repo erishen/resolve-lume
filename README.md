@@ -111,15 +111,18 @@ make start
 #    equivalent to make up (compose build + up -d) + make wait (poll /api/tools until reachable)
 #    note: make start does NOT include the sidecar — the sidecar is a host resident process, see next step.
 
-# 4. Start the host sidecar (launcher :3099 supervises + sidecar :3000)
-make sidecar-host-start
-#    status quick-check: make sidecar-host-status
+# 4. Start the host sidecar (recommended: hand it to launchd — autostart on login + respawn)
+make sidecar-autostart-install
+#    temporary/debug mode (dies with the launching shell session): make sidecar-host-start
+#    status quick-check: make sidecar-autostart-status / make sidecar-host-status
 #
 # Other common commands:
 #   make wait                 # only wait for containers ready (container Up ≠ usable)
 #   make logs                 # tail both container logs (sidecar logs in .data-sidecar/)
 #   make frontend-up          # only rebuild the frontend container
-#   make sidecar-host-stop    # stop host sidecar + launcher
+#   make sidecar-host-stop    # stop host sidecar + launcher (manual mode only)
+#   make sidecar-autostart-restart    # restart after changing sidecar/ sources
+#   make sidecar-autostart-uninstall  # remove launchd residency and stop sidecar
 #   make down                 # stop the two containers (does not affect host sidecar)
 #   make check                # static checks: tool-bridge constraints + four-list consistency + gateway/SSE/export regressions
 #   make frontend-build-check  # frontend tsc --noEmit + vite build (requires frontend/node_modules)
@@ -189,8 +192,8 @@ The sidecar is currently a resident process on the host macOS (listening on `127
 |---|---|---|
 | sidecar location | compose container | host node process |
 | Toolchain | node24/python3/uv/make inside container | directly reuses host-installed toolchain |
-| Lifecycle | `restart: unless-stopped`, boots on start | launcher is a nohup process; needs manual start after reboot |
-| Startup | must re-add sidecar service in compose | `make sidecar-host-start` |
+| Lifecycle | `restart: unless-stopped`, boots on start | manual nohup dies with its launching session; launchd mode = login autostart + KeepAlive |
+| Startup | must re-add sidecar service in compose | `make sidecar-autostart-install` (recommended) / `make sidecar-host-start` (temporary) |
 | compose status | **service removed** | supervised by launcher, not managed by compose |
 
 ### Start/Stop Commands
@@ -201,18 +204,25 @@ docker compose up -d backend frontend
 # Note: compose no longer has a sidecar service, no need to `docker compose rm -sf sidecar`;
 #      if you previously re-added a container sidecar, stop it first (both listening on 3000 would conflict).
 
-# Start launcher (:3099 control plane) + sidecar (:3000)
+# [Recommended] launchd residency: generate plist -> register -> wait for :3000
+make sidecar-autostart-install
+#   In a restricted session `launchctl bootstrap` may return EIO; the script falls
+#   back to nohup and tells you to re-run the same command in a local Terminal.
+
+# [Temporary] manual mode: nohup launcher (:3099) + sidecar (:3000)
 make sidecar-host-start
 
-# Status quick-check (launcher/sidecar alive, both /health, whether 3000 is hijacked by a container)
-make sidecar-host-status
+# Status quick-check
+make sidecar-autostart-status   # launchd job + 3099/3000/18085 probes
+make sidecar-host-status        # pidfiles + /health + whether 3000 is hijacked
 
-# Stop (launcher's SIGTERM handler also stops the sidecar child and clears the pidfile)
-make sidecar-host-stop
+# Stop: manual mode uses make sidecar-host-stop; under launchd KeepAlive brings
+# the launcher straight back, so use uninstall / restart instead.
 
 # compose has no sidecar service, so you cannot and need not "switch back to container mode".
-# Restart after changing sidecar/ (launcher restarts with it):
-make sidecar-host-stop && make sidecar-host-start
+# Restart after changing sidecar/:
+make sidecar-autostart-restart              # launchd mode
+# make sidecar-host-stop && make sidecar-host-start   # manual mode
 ```
 
 ### Components & Control Plane
@@ -230,36 +240,35 @@ make sidecar-host-stop && make sidecar-host-start
 
 - The sidecar is a **direct child** of the launcher (not detached): when the sidecar crashes and it wasn't a user-initiated stop, the launcher auto-restarts it after a 2-second backoff.
 - **Retry cap: at most 5 consecutive crashes**, after which the launcher gives up and writes the reason to `.data-sidecar/launcher.log`, waiting for manual sidecar.log investigation then `POST /start` with token (or `make sidecar-host-stop && make sidecar-host-start`). If the sidecar runs stably for more than 30 consecutive seconds, the retry budget resets (occasional crashes after a healthy run don't count).
-- **The launcher itself has no watchdog**: if the launcher crashes, you need to manually `make sidecar-host-stop` to clear the leftover pidfile then `make sidecar-host-start`. Boot autostart (including the launcher) requires configuring launchd yourself, see below.
+- **Manual (nohup) processes die with the shell/agent session that launched them**: launcher and sidecar get SIGKILLed with no crash log, while the Docker-managed containers keep running. Every frontend `/api/*` call then returns `502 Proxy error: connect ECONNREFUSED <host-gateway>:3000` and the UI shows `failed to load runtime info: failed to load models: 502`. This has nothing to do with the LLM gateway or model config — check `make sidecar-host-status` first. **The fix is the launchd residency below.**
+- **In manual mode the launcher itself has no watchdog**; under launchd, `KeepAlive` covers it.
 
-### launchd Boot Autostart (optional; make commands first, configure when you need residency)
+### launchd Residency (recommended, one command)
 
-Put the plist below at `~/Library/LaunchAgents/com.erishen.resolve-lume.launcher.plist` and `launchctl load` it. When configuring, point `ProgramArguments` to your local node and the repo's absolute path:
+`make sidecar-autostart-install` runs `scripts/install-launchd.sh`, which generates
+`~/Library/LaunchAgents/com.erishen.resolve-lume.launcher.plist` with this machine's
+absolute paths and registers it in `gui/$(id -u)`:
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.erishen.resolve-lume.launcher</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/opt/homebrew/bin/node</string>
-    <string>/Users/<you>/<repo-root>/sidecar/launcher.js</string>
-  </array>
-  <key>WorkingDirectory</key>
-  <string>/Users/<you>/<repo-root></string>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>LAUNCHER_AUTOSTART</key><string>1</string>
-  </dict>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/Users/<you>/<repo-root>/.data-sidecar/launcher.log</string>
-</dict>
-</plist>
-```
+| Key | Effect |
+|---|---|
+| `LAUNCHER_AUTOSTART=1` | launcher spawns the sidecar immediately (switch reserved in `launcher.js` for this mode) |
+| `RunAtLoad` + `KeepAlive` | login autostart + respawn on launcher crash — the watchdog manual mode lacks |
+| explicit `PATH` | launchd's default PATH is only `/usr/bin:/bin`; without this, shell/uv/node tools fail with silent `ENOENT` |
 
-> After configuring launchd, don't use the nohup branch of `make sidecar-host-start` to avoid a double start grabbing 3099.
+The generated plist contains local absolute paths, is written only to
+`~/Library/LaunchAgents/`, and is **never committed**. Before registering, the script
+stops any leftover nohup launcher so the two don't fight over 3099.
+
+> **Restricted sessions**: some agent / non-Aqua-bootstrap contexts get
+> `Bootstrap failed: 5: Input/output error` from `launchctl bootstrap` (even for a
+> minimal plist) — the plist is fine. The script prints a fallback notice and recovers
+> via nohup; the plist is already in place and loads on next login. Re-run
+> `make sidecar-autostart-install` in a local Terminal to register immediately.
+> `plist-only` generates the plist without registering.
+
+While managed, don't use `make sidecar-host-stop` (KeepAlive brings the launcher back).
+Use `make sidecar-autostart-restart` after editing `sidecar/`, and
+`make sidecar-autostart-uninstall` to remove residency.
 
 ### env Strategy (key difference from old design)
 

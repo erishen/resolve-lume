@@ -15,18 +15,29 @@ build: setup
 	docker compose build
 
 # 起两个容器（backend + frontend）。sidecar 是宿主常驻进程，不在此命令内——
-# 需另跑 `make sidecar-host-start`。restart: unless-stopped 负责容器开机自启与崩溃重拉。
+# 需另跑 `make sidecar-host-start`（临时）或 `make sidecar-autostart-install`（常驻，推荐）。
+# restart: unless-stopped 负责容器开机自启与崩溃重拉。
 up: build
 	docker compose up -d
 
 # 等 /api 真正可用（容器 Up ≠ 可用：健康检查与反代链路都要通）。
 wait:
+	@curl --noproxy '*' -fsS -m 1 http://127.0.0.1:3000/health >/dev/null 2>&1 \
+		|| echo "(提示: 宿主 sidecar :3000 未响应，/api/* 会全部 502 —— 见 make sidecar-host-start)"
 	@printf "waiting for http://127.0.0.1:18085 "
 	@i=0; \
 	until curl --noproxy '*' -fsS -m 2 http://127.0.0.1:18085/api/tools >/dev/null 2>&1; do \
 		i=$$((i+1)); \
 		if [ $$i -ge 90 ]; then \
-			echo ""; echo "timed out after 90s — check: make logs"; docker compose ps; exit 1; \
+			echo ""; echo "timed out after 90s"; \
+			if ! curl --noproxy '*' -fsS -m 1 http://127.0.0.1:3000/health >/dev/null 2>&1; then \
+				echo "✗ 根因: 宿主 sidecar (:3000) 没在跑，frontend 反代 /api/* 才会 502"; \
+				echo "  临时恢复: make sidecar-host-start"; \
+				echo "  常驻根治: make sidecar-autostart-install"; \
+			else \
+				echo "· sidecar :3000 通但 /api/tools 不通，检查容器日志: make logs"; \
+			fi; \
+			docker compose ps; exit 1; \
 		fi; \
 		printf "."; sleep 1; \
 	done; echo ""; echo "ready: http://127.0.0.1:18085"
@@ -51,8 +62,9 @@ frontend-up:
 # :3099 控制面的 /start /stop 需要 .env 里的 SIDECAR_TOKEN（本 Makefile 自动带 header，
 # 手工 curl 须自己加 X-Sidecar-Token）。轮换 token 只需重启 frontend/backend/sidecar：
 # launcher 每次请求热读 .env，无需重启。
-# 生命周期限制：launcher 是 nohup 进程（重启电脑后不会自动起来），开机自启需另配
-# launchd plist，详见 README「宿主 sidecar 模式」小节。
+# 生命周期限制：nohup 起的 launcher 属于拉起它的 shell/执行会话；会话被回收时
+# launcher 与 sidecar 会被连带 SIGKILL（日志无崩溃记录），容器照常存活但 /api/*
+# 全 502。常驻请用 `make sidecar-autostart-install` 交给 launchd，见下方小节。
 
 # 拉起 launcher（:3099 控制面），就绪后 POST /start 拉起 sidecar（:3000）
 sidecar-host-start:
@@ -120,6 +132,23 @@ sidecar-host-status:
 			echo "   切换: docker compose rm -sf sidecar && make sidecar-host-start"; \
 		fi; \
 	else echo "3000 空闲"; fi
+
+# ================= launchd 常驻（推荐） =================
+# 把 launcher 交给 macOS launchd：RunAtLoad 登录自启 + KeepAlive 崩溃重拉，
+# 且 LAUNCHER_AUTOSTART=1 让 launcher 一起来就拉起 sidecar，不再有「会话被回收
+# → 3000 空 → /api/* 502」这类静默故障。脚本按本机路径生成 plist 并只写到
+# ~/Library/LaunchAgents/（不入库），注册失败会自动降级到 nohup 模式。
+sidecar-autostart-install:
+	@bash scripts/install-launchd.sh install
+
+sidecar-autostart-uninstall:
+	@bash scripts/install-launchd.sh uninstall
+
+sidecar-autostart-restart:
+	@bash scripts/install-launchd.sh restart
+
+sidecar-autostart-status:
+	@bash scripts/install-launchd.sh status
 
 # ================= sidecar 工具代理层（.lume）的生成 =================
 # 为什么要生成而不是手写：schema 必须与 sidecar/builtin-tools.json 同源，手写会漂出
@@ -204,4 +233,4 @@ frontend-build-check:
 check: tools-lume-check test-gateway frontend-test
 	@echo "✓ 工具桥生成约束 + 四处名单一致性 + 网关/SSE/导出回归测试全部通过"
 
-.PHONY: setup build up wait start down logs frontend-up sidecar-host-start sidecar-host-stop sidecar-host-status tools-lume tools-lume-check vendor bootstrap peer-check peer-serve test-gateway frontend-test frontend-build-check check
+.PHONY: setup build up wait start down logs frontend-up sidecar-host-start sidecar-host-stop sidecar-host-status sidecar-autostart-install sidecar-autostart-uninstall sidecar-autostart-restart sidecar-autostart-status tools-lume tools-lume-check vendor bootstrap peer-check peer-serve test-gateway frontend-test frontend-build-check check

@@ -119,15 +119,18 @@ make start
 #    等价于 make up（compose build + up -d）+ make wait（轮询 /api/tools 直到通）
 #    注意：make start 不含 sidecar —— sidecar 是宿主常驻进程，见下一步。
 
-# 4. 拉起宿主 sidecar（launcher :3099 守护 + sidecar :3000）
-make sidecar-host-start
-#    状态速查：make sidecar-host-status
+# 4. 拉起宿主 sidecar（推荐交给 launchd 常驻：登录自启 + 崩溃重拉）
+make sidecar-autostart-install
+#    临时/调试模式（进程随当前终端会话存活，会话被回收即停）：make sidecar-host-start
+#    状态速查：make sidecar-autostart-status / make sidecar-host-status
 #
 # 其他常用：
 #   make wait                 # 只等容器就绪（容器 Up ≠ 可用）
 #   make logs                 # 跟踪两个容器日志（sidecar 日志在 .data-sidecar/）
 #   make frontend-up          # 只重建前端容器
-#   make sidecar-host-stop    # 停宿主 sidecar + launcher
+#   make sidecar-host-stop    # 停宿主 sidecar + launcher（仅手工模式有效）
+#   make sidecar-autostart-restart    # launchd 模式下改了 sidecar/ 源码后重启
+#   make sidecar-autostart-uninstall  # 移除 launchd 托管并停掉 sidecar
 #   make down                 # 停两个容器（不影响宿主 sidecar）
 #   make check                # 静态校验：工具桥约束 + 四处名单一致性 + 网关/SSE/导出回归
 #   make frontend-build-check  # 前端 tsc --noEmit + vite build（需 frontend/node_modules）
@@ -216,8 +219,8 @@ agent-httpd 的 API 与 resolve-studio 的 `/api/*` **不同**：
 |---|---|---|
 | sidecar 位置 | compose 容器 | 宿主 node 进程 |
 | 工具链 | 容器内 node24/python3/uv/make | 直接复用宿主已装工具链 |
-| 生命周期 | `restart: unless-stopped`，开机自启 | launcher 是 nohup 进程，重启电脑后需手动起 |
-| 启动 | 需自行在 compose 加回 sidecar service | `make sidecar-host-start` |
+| 生命周期 | `restart: unless-stopped`，开机自启 | 手工模式 nohup 随启动会话回收；launchd 模式登录自启 + KeepAlive |
+| 启动 | 需自行在 compose 加回 sidecar service | `make sidecar-autostart-install`（推荐）/ `make sidecar-host-start`（临时） |
 | compose 现状 | **已移除该服务** | 由 launcher 守护，不经 compose 管理 |
 
 ### 启停命令
@@ -228,18 +231,25 @@ docker compose up -d backend frontend
 # 注：compose 现已无 sidecar 服务，无需再 `docker compose rm -sf sidecar`；
 #     若你曾手动加回过容器 sidecar，先停它再继续（两边都监听 3000 会冲突）。
 
-# 启动 launcher（:3099 控制面）+ sidecar（:3000）
+# 【推荐】交给 launchd 常驻：生成 plist → 注册 → 等 :3000 就绪
+make sidecar-autostart-install
+#   注册接口在受限会话里可能返回 EIO；脚本会降级到 nohup 并提示，
+#   在本机 Terminal 里重跑同一条命令即可完成注册（plist 下次登录也会自动加载）。
+
+# 【临时】手工模式：nohup 起 launcher（:3099）+ sidecar（:3000）
 make sidecar-host-start
 
-# 状态速查（launcher/sidecar 存活、两端 /health、3000 是否被容器抢占）
-make sidecar-host-status
+# 状态速查
+make sidecar-autostart-status   # launchd job + 3099/3000/18085 四处探测
+make sidecar-host-status        # pidfile + /health + 3000 是否被容器抢占
 
-# 停止（launcher 的 SIGTERM 处理会连带停掉 sidecar 子进程并清 pidfile）
-make sidecar-host-stop
+# 停止：手工模式用 make sidecar-host-stop（SIGTERM 连带停 sidecar 并清 pidfile）；
+# launchd 模式下它会被 KeepAlive 立刻拉回，请改用 uninstall / restart。
 
 # compose 里已没有 sidecar 服务，无需也不能「回切容器模式」。
-# 改了 sidecar/ 后的重启姿势（launcher 会跟着重启）：
-make sidecar-host-stop && make sidecar-host-start
+# 改了 sidecar/ 源码后的重启姿势：
+make sidecar-autostart-restart              # launchd 模式
+# make sidecar-host-stop && make sidecar-host-start   # 手工模式
 ```
 
 ### 组件与控制面
@@ -268,39 +278,42 @@ make sidecar-host-stop && make sidecar-host-start
   `.data-sidecar/launcher.log` 写明原因，等待人工排查 sidecar.log 后再
   带 token `POST /start`（或 `make sidecar-host-stop && make sidecar-host-start`）。
   sidecar 若连续稳定运行超过 30 秒，重试预算清零（健康跑过后的偶发崩溃不计数）。
-- **launcher 自身没有看门狗**：launcher 崩了 = 需要手动 `make sidecar-host-stop`
-  清残留 pidfile 后重新 `make sidecar-host-start`。开机自启（含 launcher）需要
-  自己配 launchd，见下。
+- **手工模式（nohup）的进程会随启动它的会话一起被回收**：launcher 与 sidecar 被
+  直接 SIGKILL，日志里没有崩溃记录、只剩 pidfile 残留；而 Docker 托管的两个容器
+  照常存活。此时 frontend 反代 `/api/*` 全部变成
+  `502 Proxy error: connect ECONNREFUSED <host-gateway>:3000`，UI 报
+  `failed to load runtime info: failed to load models: 502`。这类 502 与 LLM 网关、
+  模型配置都无关，先跑 `make sidecar-host-status` 看 3000 有没有在听。
+  **根治是下节的 launchd 托管。**
+- **手工模式下 launcher 自身没有看门狗**：launcher 崩了 = 需要手动
+  `make sidecar-host-stop` 清残留 pidfile 后重新 `make sidecar-host-start`；
+  配了 launchd 后由 `KeepAlive` 兜住。
 
-### launchd 开机自启（可选；先给 make 命令，需要常驻时再配）
+### launchd 常驻（推荐，一条命令装好）
 
-将以下 plist 放到 `~/Library/LaunchAgents/com.erishen.resolve-lume.launcher.plist`，
-`launchctl load` 即可。配置时把 `ProgramArguments` 指向本机 node 与本仓库绝对路径：
+`make sidecar-autostart-install` 调用 `scripts/install-launchd.sh`，按本机路径生成
+`~/Library/LaunchAgents/com.erishen.resolve-lume.launcher.plist` 并注册到 `gui/$(id -u)`：
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.erishen.resolve-lume.launcher</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/opt/homebrew/bin/node</string>
-    <string>/Users/&lt;you&gt;/&lt;repo-root&gt;/sidecar/launcher.js</string>
-  </array>
-  <key>WorkingDirectory</key>
-  <string>/Users/&lt;you&gt;/&lt;repo-root&gt;</string>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>LAUNCHER_AUTOSTART</key><string>1</string>
-  </dict>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/Users/&lt;you&gt;/&lt;repo-root&gt;/.data-sidecar/launcher.log</string>
-</dict>
-</plist>
-```
+| 配置 | 作用 |
+|---|---|
+| `LAUNCHER_AUTOSTART=1` | launcher 一起来就拉起 sidecar（`launcher.js` 为该模式预留的开关） |
+| `RunAtLoad` + `KeepAlive` | 登录自启 + launcher 崩溃自动重拉，补上 nohup 模式没有的看门狗 |
+| 显式 `PATH` | launchd 默认 PATH 只有 `/usr/bin:/bin`，不补会让 shell/uv/node 工具静默 `ENOENT` |
+| `StandardOut/ErrorPath` | `.data-sidecar/launcher.log` / `launchd.err.log` |
 
-> 配了 launchd 后不要再用 `make sidecar-host-start` 的 nohup 分支，避免双开抢 3099。
+生成的 plist 含本机绝对路径，只写 `~/Library/LaunchAgents/`，**不入库**。注册前脚本
+会先停掉残留的 nohup launcher，避免两边抢 3099 触发 `EADDRINUSE` 与 KeepAlive
+无限重拉。
+
+> **受限执行会话**：某些 Agent / 非 Aqua bootstrap 上下文调 `launchctl bootstrap`
+> 会返回 `Bootstrap failed: 5: Input/output error`（连最小 plist 也一样），这不是
+> plist 有误。脚本会打印降级提示并回退到 nohup 模式先把服务救回来；plist 已就位，
+> 下次登录会自动加载。在本机 Terminal 里重跑
+> `make sidecar-autostart-install` 即可立即注册。
+
+托管期间不要用 `make sidecar-host-stop`（KeepAlive 会立刻把 launcher 拉回来）；
+改了 `sidecar/` 源码用 `make sidecar-autostart-restart`，彻底移除用
+`make sidecar-autostart-uninstall`。
 
 ### env 策略（与旧设计的关键区别）
 
