@@ -246,10 +246,14 @@ module.exports = {
       env: buildArticleRunEnv(prov),
       timeoutMs: 1_800_000,
     })
-    if (!res.ok) return res.error
-
-    const { stdout, stderr } = res
+    const { stdout = '', stderr = '' } = res
     const outcome = H.articleRunOutcome(stdout, stderr)
+    // 文章已在 Phase 4/5 同步落盘，但「可选发布」步骤失败会让 run.py 以非 0
+    // 退出。旧实现直接 `return res.error`，把已生成的文章误报成失败，模型
+    // 再据 stderr 里的 DeprecationWarning 编造「异步事件循环的小问题」。
+    // 只要 stdout 有「中文已保存」marker，就按「已生成 + 后续失败」处理。
+    const lateFailure = !res.ok && outcome.ok
+    if (!res.ok && !lateFailure) return res.error
     if (!outcome.ok) {
       // run.py 隔离坏稿时 exit code 依旧是 0。绝不能走到下面的 "generated"
       // 分支，否则模型会向用户谎报「文章已成功生成」（11-06 实测）。
@@ -274,7 +278,21 @@ module.exports = {
     const parts = [`> crewai-pse article generated for project: **${project}**`]
     if (zhPath) parts.push(`> Chinese: ${zhPath}`)
     if (enPath) parts.push(`> English: ${enPath}`)
-    if (publish) parts.push('> Auto-published to WordPress.')
+    if (publish) {
+      // 旧实现无条件声称已发布；publish.py 的确认门在非交互环境下会取消发布，
+      // 但文章已经落盘，于是「生成成功」被包装成「已自动发布」的谎报。
+      const cancelled = /已取消，未发布任何内容|⚠️ 未发布/.test(stdout)
+      parts.push(cancelled
+        ? '> ⚠️ 未发布：发布步骤被确认门取消或失败；文章已生成落盘，未发出任何内容。请勿向用户声称已发布。'
+        : '> WordPress 发布步骤已执行；是否上线请以线上实际状态为准，不要替用户确认。')
+    }
+    if (lateFailure) {
+      parts.push(
+        '> ⚠️ 流水线在文章落盘之后以非 0 退出（通常是可选发布步骤）；生成结果有效。' +
+        '请把这条如实转达，不要说成「出了个小问题」。',
+      )
+      if (res.error) parts.push('', '--- 后续失败信息 ---', String(res.error).slice(-600))
+    }
 
     // 落盘后清洗 frontmatter：上游免费模型会把 tool-call 控制 token 吐进
     // title（实测 lume-a2a 中英两篇都是 `<｜｜DSML｜｜ calls>`）。只改 title

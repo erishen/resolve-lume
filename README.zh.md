@@ -218,7 +218,18 @@ agent-httpd 的 API 与 resolve-studio 的 `/api/*` **不同**：
   stray-repeat guard 只在「该轮同时输出了正文」时生效，纯工具轮拦不住，所以这层放
   sidecar。若最终仍无正文，`agent.js` 的 `done` 会输出工具轨迹（连续重复折叠成
   `hot-news ×4`）+ 轮数 + 最后错误，不再只甩一句「请重试」。
-  校验：`chatBody.test.js`(4) / `toolGuard.test.js`(7) / `translateFrame.test.js`(7)。
+  校验：`chatBody.test.js`(6) / `toolGuard.test.js`(7) / `translateFrame.test.js`(7)。
+- **发布必须用户显式授权**：`article-write(publish=true)` 只在「当前聊天消息」里明确
+  写出发布 / 上线 / publish 时才放行（活跃流在 `progress.js` 里携带 userMessage）；
+  用户只回清单编号时 `/api/tools/call` 直接拒绝。`publish.py` 的确认门在非交互环境
+  会取消并 `exit 1`，旧实现让**已落盘**的文章被判成整次生成失败，模型再拿 stderr 里的
+  `DeprecationWarning` 编出「异步事件循环的小问题」；现在 `translate.py` 不再因可选
+  发布失败退出，`business-pse.js` 也能识别「已落盘但退出码非 0」，如实报告
+  「已生成 / 未发布」，且不再无条件声称 `Auto-published`。
+- **进度噪声与相关性证据**：Python 3.13 的 `asyncio.get_event_loop()` 已改成
+  `get_running_loop()`，publisher 过滤解释器级 warning，避免无害告警被当成阶段故障。
+  crewai-pse 的相关性闸门把同一文件的完整路径 / 后缀写法归一为一个证据，并要求
+  「≥1 个真实符号 或 ≥2 个不同源码文件」，杜绝项目名刷屏 + 反复引用单个文件凑分放行。
 - **job 流是 GET + 带 seq 的追加日志**，因此可以自动重连：`streamJob` 指数退避
   （500ms→8s 封顶），每次重连先收 `snapshot`，`useJobs` 按 `seq` 去重；
   「连接中断，正在重连」会显示在面板状态里，终态快照到达即停止重连。

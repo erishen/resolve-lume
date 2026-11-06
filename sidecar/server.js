@@ -31,7 +31,7 @@ const builtin = require('./builtin-exec')
 const H = require('./business-helpers')
 const progress = require('./progress')
 const toolGuard = require('./toolGuard')
-const { buildAgentChatBody } = require('./chatBody')
+const { buildAgentChatBody, hasExplicitPublishIntent } = require('./chatBody')
 const { isSensitivePath, tokenMatches, MAX_PREVIEW_BYTES } = require('./security')
 
 // Guard against a stray PORT=0 / non-numeric value in the environment: Node
@@ -830,6 +830,22 @@ async function handle(req, res) {
       if (!builtin.AGENT_TOOL_ALLOW.has(toolName)) {
         return send(res, 403, {
           error: `tool "${toolName}" is not exposed to the agent bridge; run it from the frontend tool panel (call capabilities for the full list)`,
+        })
+      }
+      // Publishing is an EXTERNAL side effect. The model must not decide it on
+      // its own: on 2026-11-06 a user replied "7" (pick a project) and the
+      // agent called article-write({project:"7", publish:true}) unprompted.
+      // Only the current chat message can authorize it; the tool panel path
+      // (/api/tool/run) is a deliberate human action and stays unrestricted.
+      if (toolName === 'article-write' && toolArgs && toolArgs.publish === true &&
+          !hasExplicitPublishIntent(progress.activeChatUserMessage())) {
+        return send(res, 200, {
+          name: toolName,
+          result:
+            'tool error: 发布是有外部副作用的动作，用户只选择了项目编号、并未明确要求发布；' +
+            '已拒绝 publish=true。请省略 publish 参数重新生成文章，成功后如实转达产物路径。' +
+            '只有用户在当前消息里明确说「发布 / 上线 / publish」时才可传该参数。' +
+            '这不是「出现了一个小问题」，也不是需要用户做选择题的情况。',
         })
       }
       // Refuse byte-identical repeats of a call that just failed. C's own

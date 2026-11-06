@@ -32,6 +32,9 @@ const streams = new Map()
 let nextStreamId = 1
 
 const ANSI_RE = /\u001b\[[0-9;?]*[ -\/]*[@-~]/g
+// Interpreter-level noise that is not a tool phase and must never be framed
+// as a failure to the user/model. Real errors (❌ / Traceback) stay visible.
+const NOISE_LINE_RE = /DeprecationWarning|There is no current event loop|^\s*asyncio\.get_event_loop\(\)\s*$|^\s*\(node:\d+\).*ExperimentalWarning|^\s*\(Use `node --trace-warnings/i
 // Keep tool logs out of exports/chat if a pipeline ever echoes credentials.
 const CREDENTIAL_PATTERNS = [
   [/((?:API[_ -]?KEY|ACCESS[_ -]?KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*\s*[=:]\s*)(\S+)/gi, '$1[redacted]'],
@@ -43,9 +46,16 @@ function reasoningFrame(text) {
 }
 
 // ---- active chat stream registry -----------------------------------------
-function registerChatStream(res) {
+function registerChatStream(res, meta = {}) {
   const id = nextStreamId++
-  streams.set(id, { id, res, startedAt: Date.now() })
+  streams.set(id, {
+    id,
+    res,
+    startedAt: Date.now(),
+    // Current user message of this chat run. Used to authorize side-effecting
+    // tool parameters (publish=true) without a runId in the .lume tool bridge.
+    userMessage: String(meta.userMessage || ''),
+  })
   return id
 }
 
@@ -55,6 +65,12 @@ function unregisterChatStream(id) {
 
 function activeChatStreamCount() {
   return streams.size
+}
+
+/** User message of the sole active chat run; '' when ambiguous (never guess). */
+function activeChatUserMessage() {
+  if (streams.size !== 1) return ''
+  return streams.values().next().value.userMessage || ''
 }
 
 /** Inject one progress line into the sole active chat stream. Returns false on skip. */
@@ -110,6 +126,12 @@ function createProgressPublisher(sink, toolName, opts = {}) {
   function cleanLine(raw) {
     let s = String(raw).replace(ANSI_RE, '').replace(/\r/g, '').trim()
     if (!s || /^[-=_*#~.`]{3,}$/.test(s)) return ''
+    // Harmless interpreter/framework warnings must not show up as "progress".
+    // A free-tier model once read `DeprecationWarning: There is no current
+    // event loop` from the Thinking panel and told the user the article run
+    // had "一个与异步事件循环相关的小问题" — while it had actually succeeded.
+    // The full text is still collected in stdout/stderr for diagnostics.
+    if (NOISE_LINE_RE.test(s)) return ''
     for (const [re, rep] of CREDENTIAL_PATTERNS) s = s.replace(re, rep)
     if (s.length > maxLineChars) s = s.slice(0, maxLineChars) + '…'
     return s
@@ -194,6 +216,7 @@ module.exports = {
   registerChatStream,
   unregisterChatStream,
   activeChatStreamCount,
+  activeChatUserMessage,
   broadcastToActiveChat,
   currentEmit,
   runWithEmit,

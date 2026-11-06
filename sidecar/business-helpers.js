@@ -261,7 +261,15 @@ async function spawnCapture(opts) {
     if (code !== 0) {
       const tail = stderr.slice(-500) || stdout.slice(-500)
       const why = spawnErr ? ` (spawn error: ${spawnErr})` : ''
-      return { ok: false, error: `error: ${tool} exited with code ${code}${why}\n${tail}` }
+      // 保留 stdout/stderr：文章流水线可能在落盘之后因「可选发布步骤」失败，
+      // 调用方需要靠 stdout 里的「中文已保存」marker 识别「已生成但发布失败」，
+      // 而不是把整次调用笼统判成生成失败。
+      return {
+        ok: false,
+        error: `error: ${tool} exited with code ${code}${why}\n${tail}`,
+        stdout,
+        stderr,
+      }
     }
   } catch (e) {
     return { ok: false, error: `error: ${tool} spawn failed: ${e.message}` }

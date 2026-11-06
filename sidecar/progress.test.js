@@ -80,6 +80,25 @@ test('progress is injected only into the SOLE active chat stream', () => {
   assert.equal(P.broadcastToActiveChat('orphan'), false)
 })
 
+test('user message is readable only for the sole active stream', () => {
+  const a = fakeRes()
+  const idA = P.registerChatStream(a, { userMessage: '7' })
+  try {
+    assert.equal(P.activeChatUserMessage(), '7')
+    const b = fakeRes()
+    const idB = P.registerChatStream(b, { userMessage: '发布' })
+    try {
+      // Ambiguous (concurrent chats): never guess which run authorized it.
+      assert.equal(P.activeChatUserMessage(), '')
+    } finally {
+      P.unregisterChatStream(idB)
+    }
+  } finally {
+    P.unregisterChatStream(idA)
+  }
+  assert.equal(P.activeChatUserMessage(), '')
+})
+
 test('a closed/destroyed response never receives progress', () => {
   const r = fakeRes()
   r.writableEnded = true
@@ -93,6 +112,25 @@ test('a closed/destroyed response never receives progress', () => {
 })
 
 // ---- 3. chunk normalisation ----------------------------------------------
+test('interpreter warnings never become progress frames', () => {
+  const out = []
+  const pub = P.createProgressPublisher((s) => out.push(s), 'article-write', {
+    ...fakeClock().opts, minIntervalMs: 0,
+  })
+  pub.push(
+    'run.py:287: DeprecationWarning: There is no current event loop\n' +
+    '  asyncio.get_event_loop()\n' +
+    '(node:123) ExperimentalWarning: SQLite is an experimental feature\n' +
+    '✅ Phase 1 提纲完成\n',
+  )
+  pub.finish()
+  const all = out.join('')
+  assert.match(all, /✅ Phase 1/)
+  assert.doesNotMatch(all, /DeprecationWarning/)
+  assert.doesNotMatch(all, /get_event_loop/)
+  assert.doesNotMatch(all, /ExperimentalWarning/)
+})
+
 test('publisher joins half-lines, strips ANSI and drops noise lines', () => {
   const out = []
   const pub = P.createProgressPublisher((s) => out.push(s), 'article-write', {

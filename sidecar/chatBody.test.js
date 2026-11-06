@@ -5,7 +5,7 @@
 // MUST be injected even when getTask() returns undefined.
 // Run with `make check`. Zero external dependencies.
 const assert = require('node:assert/strict')
-const { buildAgentChatBody, TOOL_DISCIPLINE } = require('./chatBody')
+const { buildAgentChatBody, TOOL_DISCIPLINE, hasExplicitPublishIntent } = require('./chatBody')
 
 const cases = []
 function test(name, fn) {
@@ -61,6 +61,25 @@ test('discipline covers numbering, retries and the mandatory final summary', () 
   assert.match(TOOL_DISCIPLINE, /编号原样传给对应工具/)
   assert.match(TOOL_DISCIPLINE, /严禁用完全相同的参数重复调用/)
   assert.match(TOOL_DISCIPLINE, /必须输出面向用户的中文文字总结/)
+})
+
+test('discipline forbids fake "small problem" scripts and unprompted publish', () => {
+  assert.match(TOOL_DISCIPLINE, /严禁编造/)
+  assert.match(TOOL_DISCIPLINE, /DeprecationWarning/)
+  assert.match(TOOL_DISCIPLINE, /不得自行决定发布/)
+})
+
+test('publish intent needs explicit, non-negated user wording', () => {
+  assert.equal(hasExplicitPublishIntent('7'), false)
+  assert.equal(hasExplicitPublishIntent('写 resolve-lume 的文章'), false)
+  assert.equal(hasExplicitPublishIntent(''), false)
+  assert.equal(hasExplicitPublishIntent(null), false)
+  assert.equal(hasExplicitPublishIntent('生成后发布到 WordPress'), true)
+  assert.equal(hasExplicitPublishIntent('publish it'), true)
+  assert.equal(hasExplicitPublishIntent('请上线'), true)
+  assert.equal(hasExplicitPublishIntent('不要发布，先给我看看'), false)
+  assert.equal(hasExplicitPublishIntent('先别上线'), false)
+  assert.equal(hasExplicitPublishIntent('暂不发布'), false)
 })
 
 let failed = 0

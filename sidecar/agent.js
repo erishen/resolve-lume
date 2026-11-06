@@ -200,7 +200,16 @@ async function proxySSE(req, res, method, incomingPath, bodyBuffer) {
   // response so progress.js can inject `reasoning` frames into it. Only
   // conversational runs register — /api/tool/run owns its own SSE response.
   const isChatStream = incomingPath === '/api/chat' || incomingPath === '/api/pse'
-  const streamId = isChatStream ? progress.registerChatStream(res) : null
+  // Carry the current user message with the live stream. The .lume tool bridge
+  // has no runId, so /api/tools/call uses the sole active stream's message to
+  // decide whether a side-effecting parameter (publish=true) was authorized.
+  let userMessage = ''
+  if (isChatStream) {
+    try {
+      userMessage = String(JSON.parse(bodyBuffer.toString('utf8')).message || '')
+    } catch { /* /api/pse may use a different shape; stay conservative */ }
+  }
+  const streamId = isChatStream ? progress.registerChatStream(res, { userMessage }) : null
   const releaseStream = () => progress.unregisterChatStream(streamId)
   if (isChatStream) res.on('close', releaseStream)
   // text: full delta stream (kept for callers that inspect it);

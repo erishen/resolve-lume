@@ -15,7 +15,18 @@ const TOOL_DISCIPLINE = [
   '3. 长跑工具（article-write / hot-news / pse-review / resume-tailor 等）一次请求最多调用一次；失败就报告，不要连跑。',
   '4. 用户回复清单编号（如 “7”）时，把编号原样传给对应工具的参数，不要自行翻译成项目名，也不要凭印象猜名字。',
   '5. 无论成功或失败，本轮必须输出面向用户的中文文字总结；不要在只有工具调用、没有正文的情况下结束。',
+  '6. 工具成功时必须如实转达结论（项目名、产物路径、是否隔离/是否发布）；进度日志里的 DeprecationWarning、asyncio 提示等无害告警不是故障。严禁编造「出现了一个小问题」之类的安抚话术，严禁用「是否需要我…/请选择 1、2、3」代替结论。',
+  '7. publish / 发布 / 上线这类有外部副作用的动作，只有用户在当前消息里明确写出「发布」「上线」「publish」时才允许置 true。用户只回复编号或项目名时一律省略该参数，不得自行决定发布。',
 ].join('\n')
+
+// Explicit user consent for a side-effecting publish. Negations ("不要发布",
+// "先别上线") must NOT be read as consent. Kept pure so the /api/tools/call
+// guard can be unit-tested without an HTTP server.
+function hasExplicitPublishIntent(message) {
+  let s = String(message == null ? '' : message)
+  s = s.replace(/(不|别|勿|暂|无需|不用|禁止|避免|先不|不要)\s*(要|用|会|急)?\s*(发布|上线|publish)[^，。！!?；;\n]*/gi, '')
+  return /(发布|上线|publish|发到线上|推送到|post\s+to)/i.test(s)
+}
 
 /**
  * resolve-studio sends { messages, model, ... }; agent-httpd expects
@@ -49,4 +60,4 @@ function buildAgentChatBody(body, task) {
   return agentBody
 }
 
-module.exports = { buildAgentChatBody, TOOL_DISCIPLINE }
+module.exports = { buildAgentChatBody, TOOL_DISCIPLINE, hasExplicitPublishIntent }

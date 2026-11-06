@@ -192,6 +192,55 @@ test('article-write returns an error (never "generated") for a quarantined run',
   }
 })
 
+test('article-write: publish-gate cancellation is "generated", not "failed"', async () => {
+  // 11-06 实测：文章已落盘，但 --publish 触发 publish.py 确认门取消 →
+  // run.py 退出 1 → 旧实现直接 return res.error，模型把 stderr 的
+  // DeprecationWarning 读成「异步事件循环的小问题」并编造三选一话术。
+  const savedEnv = process.env.CREWAI_PSE_DIR
+  const savedRun = H.runPseTask
+  process.env.CREWAI_PSE_DIR = CREWAI_ROOT
+  H.runPseTask = async () => ({
+    ok: false,
+    error: 'error: article-write exited with code 1\n⏹️ 已取消，未发布任何内容',
+    stdout: '中文已保存 → /a/zh.md\n英文已保存 → /a/en.md\n' +
+      '🚀 发布文章到 WordPress...\n⏹️ 已取消，未发布任何内容\n',
+    stderr: 'run.py:287: DeprecationWarning: There is no current event loop\n',
+  })
+  try {
+    const r = await PSE['article-write']({ project: 'resolve-lume', publish: true })
+    assert.match(r, /article generated/)
+    assert.match(r, /未发布/)
+    assert.match(r, /流水线在文章落盘之后/)
+    assert.doesNotMatch(r, /^error:/)
+    assert.doesNotMatch(r, /Auto-published/)
+  } finally {
+    H.runPseTask = savedRun
+    if (savedEnv === undefined) delete process.env.CREWAI_PSE_DIR
+    else process.env.CREWAI_PSE_DIR = savedEnv
+  }
+})
+
+test('article-write still errors when nothing was actually generated', async () => {
+  const savedEnv = process.env.CREWAI_PSE_DIR
+  const savedRun = H.runPseTask
+  process.env.CREWAI_PSE_DIR = CREWAI_ROOT
+  H.runPseTask = async () => ({
+    ok: false,
+    error: 'error: article-write exited with code 1\nTraceback: boom',
+    stdout: '',
+    stderr: 'Traceback: boom',
+  })
+  try {
+    const r = await PSE['article-write']({ project: 'resolve-lume' })
+    assert.match(r, /^error:/)
+    assert.doesNotMatch(r, /article generated/)
+  } finally {
+    H.runPseTask = savedRun
+    if (savedEnv === undefined) delete process.env.CREWAI_PSE_DIR
+    else process.env.CREWAI_PSE_DIR = savedEnv
+  }
+})
+
 test('article-write rejects an unknown style instead of silently auto-rotating', async () => {
   const savedEnv = process.env.CREWAI_PSE_DIR
   const savedRun = H.runPseTask
