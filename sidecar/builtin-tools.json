@@ -425,10 +425,8 @@
             "description": "Project key from crewai-pse projects.json (read live on every call, so newly discovered projects appear immediately). Omit it (call WITHOUT `project`) to get the candidate list; once the user picks one, pass project=<key> to write that single article. Never guess or invent a project name.",
             "enum": [
               "alva-e2e",
-              "lume-a2a",
               "nsbp-shop-e2e",
               "rag-platform",
-              "resolve-lume",
               "solo-chat",
               "tax-agent-platform"
             ]

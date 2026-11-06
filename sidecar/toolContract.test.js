@@ -180,7 +180,7 @@ test('article-write returns an error (never "generated") for a quarantined run',
     stderr: '',
   })
   try {
-    const r = await PSE['article-write']({ project: 'resolve-lume' })
+    const r = await PSE['article-write']({ project: 'solo-chat' })
     assert.match(r, /^error:/)
     assert.match(r, /未生成可发布文章/)
     assert.match(r, /项目相关性不足/)
@@ -207,7 +207,7 @@ test('article-write: publish-gate cancellation is "generated", not "failed"', as
     stderr: 'run.py:287: DeprecationWarning: There is no current event loop\n',
   })
   try {
-    const r = await PSE['article-write']({ project: 'resolve-lume', publish: true })
+    const r = await PSE['article-write']({ project: 'solo-chat', publish: true })
     assert.match(r, /article generated/)
     assert.match(r, /未发布/)
     assert.match(r, /流水线在文章落盘之后/)
@@ -231,7 +231,7 @@ test('article-write still errors when nothing was actually generated', async () 
     stderr: 'Traceback: boom',
   })
   try {
-    const r = await PSE['article-write']({ project: 'resolve-lume' })
+    const r = await PSE['article-write']({ project: 'solo-chat' })
     assert.match(r, /^error:/)
     assert.doesNotMatch(r, /article generated/)
   } finally {
@@ -248,7 +248,7 @@ test('article-write rejects an unknown style instead of silently auto-rotating',
   let spawned = false
   H.runPseTask = async () => { spawned = true; return { ok: true, stdout: '', stderr: '' } }
   try {
-    const r = await PSE['article-write']({ project: 'resolve-lume', style: 'K' })
+    const r = await PSE['article-write']({ project: 'solo-chat', style: 'K' })
     assert.match(r, /^error:/)
     assert.match(r, /不支持 style="K"/)
     assert.equal(spawned, false)
@@ -307,13 +307,13 @@ test('article-write rejects an unknown provider instead of silently using free',
 // ---- 7b. 编号选择串台（11-06：用户回「7」→ 未注册的 lume-orbstack）------
 test('article project numbering has one authoritative ordered list', () => {
   const keys = H.articleProjectKeys(CREWAI_ROOT)
-  assert.ok(keys.length >= 7)
-  // 用户已经看到的清单是 projects.json 的插入顺序（7 = resolve-lume），
-  // 改成字母序会让既有选择习惯失效。
-  assert.deepEqual(keys, Object.keys(JSON.parse(fs.readFileSync(PROJECTS, 'utf8'))))
-  assert.equal(keys[6], 'resolve-lume')
-  assert.equal(H.resolveArticleProject('7', keys).key, 'resolve-lume')
-  assert.equal(H.resolveArticleProject('resolve-lume', keys).key, 'resolve-lume')
+  const live = Object.keys(JSON.parse(fs.readFileSync(PROJECTS, 'utf8')))
+  // 编号清单必须与 projects.json 插入顺序完全一致（否则既有选择习惯失效）
+  assert.deepEqual(keys, live)
+  // 数字选择解析到对应 key；越界/未注册给出明确原因（不依赖具体项目名）
+  const N = String(keys.length)
+  assert.equal(H.resolveArticleProject(N, keys).key, keys[keys.length - 1])
+  assert.equal(H.resolveArticleProject('1', keys).key, keys[0])
   assert.equal(H.resolveArticleProject('99', keys).reason, 'range')
   assert.equal(H.resolveArticleProject('lume-orbstack', keys).reason, 'unknown')
   assert.match(H.numberedProjectKeys(keys), /^1\. /)
@@ -323,15 +323,16 @@ test('article-write resolves a numeric project choice itself', async () => {
   const savedEnv = process.env.CREWAI_PSE_DIR
   const savedRun = H.runPseTask
   process.env.CREWAI_PSE_DIR = CREWAI_ROOT
+  const keys = H.articleProjectKeys(CREWAI_ROOT)
   let seenArgs = null
   H.runPseTask = async (o) => {
     seenArgs = o.args
     return { ok: true, stdout: '中文已保存 → /a/zh.md\n', stderr: '' }
   }
   try {
-    const r = await PSE['article-write']({ project: '7' })
+    const r = await PSE['article-write']({ project: String(keys.length) })
     assert.match(r, /article generated/)
-    assert.deepEqual(seenArgs, [H.articleProjectKeys(CREWAI_ROOT)[6]])
+    assert.deepEqual(seenArgs, [keys[keys.length - 1]])
   } finally {
     H.runPseTask = savedRun
     if (savedEnv === undefined) delete process.env.CREWAI_PSE_DIR
