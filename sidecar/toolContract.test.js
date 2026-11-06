@@ -210,6 +210,51 @@ test('article-write rejects an unknown style instead of silently auto-rotating',
   }
 })
 
+test('article-write quarantine error no longer prescribes a style switch', async () => {
+  // 11-06 alva-e2e：旧文案写死「改用 style=B / style=D（非骨架写作流）」，
+  // 模型照抄成回答，把相关性闸门误判归因成骨架流并诱导用户无意义重试。
+  const savedEnv = process.env.CREWAI_PSE_DIR
+  const savedRun = H.runPseTask
+  process.env.CREWAI_PSE_DIR = CREWAI_ROOT
+  H.runPseTask = async () => ({
+    ok: true,
+    stdout: '❌ 项目相关性不足，隔离待复核\n' +
+      '   已保存待复核 → /a/needs-review/x.md\n' +
+      '   隔离原因 → x.reason.txt: 项目相关性不足（得分 5 < 8）\n',
+    stderr: '',
+  })
+  try {
+    const r = await PSE['article-write']({ project: 'alva-e2e', style: 'A' })
+    assert.match(r, /^error:/)
+    assert.match(r, /项目相关性不足/)
+    assert.doesNotMatch(r, /改用 style=/)
+    assert.doesNotMatch(r, /非骨架写作流/)
+    assert.match(r, /不要只靠换 style 重试/)
+  } finally {
+    H.runPseTask = savedRun
+    if (savedEnv === undefined) delete process.env.CREWAI_PSE_DIR
+    else process.env.CREWAI_PSE_DIR = savedEnv
+  }
+})
+
+test('article-write rejects an unknown provider instead of silently using free', async () => {
+  const savedEnv = process.env.CREWAI_PSE_DIR
+  const savedRun = H.runPseTask
+  process.env.CREWAI_PSE_DIR = CREWAI_ROOT
+  let spawned = false
+  H.runPseTask = async () => { spawned = true; return { ok: true, stdout: '', stderr: '' } }
+  try {
+    const r = await PSE['article-write']({ project: 'alva-e2e', provider: 'medium' })
+    assert.match(r, /^error:/)
+    assert.match(r, /不支持 provider="medium"/)
+    assert.equal(spawned, false)
+  } finally {
+    H.runPseTask = savedRun
+    if (savedEnv === undefined) delete process.env.CREWAI_PSE_DIR
+    else process.env.CREWAI_PSE_DIR = savedEnv
+  }
+})
+
 // ---- 8. generator self-check -------------------------------------------
 test('generator --check enforces the desc contract', () => {
   const out = execFileSync(process.execPath,

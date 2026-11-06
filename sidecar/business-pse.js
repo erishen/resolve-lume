@@ -44,6 +44,7 @@ function buildRunEnv(provider) {
 // them stripped so crewai-pse/.env's own deepseek creds take over via cwd
 // load_dotenv. (Distinct from buildRunEnv above, which targets autogen-pse.)
 const ARTICLE_STYLE_NAMES = ['A', 'B', 'C', 'D', 'E', 'F']
+const ARTICLE_PROVIDER_NAMES = ['free', 'deepseek']
 function buildArticleRunEnv(provider) {
   const env = { ...process.env }
   delete env.OPENAI_MODEL
@@ -172,6 +173,13 @@ module.exports = {
   'article-write': async function articleWrite(args) {
     args = args || {}
     const { project, publish = false, style, provider = H.getPseProvider() } = args
+    // 旧实现只判断 `provider !== 'deepseek'`，任何非法值都静默当 free 跑，
+    // 模型传了 "medium" 也毫无反馈。与 style 一样改为明确拒绝。
+    const prov = String(provider).toLowerCase()
+    if (!ARTICLE_PROVIDER_NAMES.includes(prov)) {
+      return `error: article-write 不支持 provider="${provider}"；可选 ` +
+        `${ARTICLE_PROVIDER_NAMES.join(' / ')}（省略则沿用宿主默认）。`
+    }
 
     let CREWAI_PSE
     try {
@@ -210,10 +218,12 @@ module.exports = {
     if (style) {
       const s = String(style).trim().toUpperCase()
       // 旧实现把不认识的值静默丢掉 → 调用方以为指定了风格，实际回落到
-      // 自动轮转（A-K，可能又抽到出过跑题稿的 K 骨架流）。现在明确报错。
+      // pick_style 的自动轮转（A–F）。现在明确报错。
+      // 提示里不要出现「骨架流」等归因词：模型上次把相关性不足误读成
+      // 「走了骨架流」，进而建议用户改用 style=B/D 无意义重试。
       if (!ARTICLE_STYLE_NAMES.includes(s)) {
         return `error: article-write 不支持 style="${style}"；可选 ${ARTICLE_STYLE_NAMES.join('/')}。` +
-          ' 框架的 G-K 骨架风格未对 UI 开放（程序化骨架 + 禁止 LLM 重写，容易产出通用议论文）。'
+          ' 不要传中文风格名；省略该参数则由框架自动选择。'
       }
       runArgs.push(`--style=${s}`)
     }
@@ -225,7 +235,7 @@ module.exports = {
       runFile: path.join('tasks', 'project-articles', 'run.py'),
       taskDir: CREWAI_PSE,
       args: runArgs,
-      env: buildArticleRunEnv(provider),
+      env: buildArticleRunEnv(prov),
       timeoutMs: 1_800_000,
     })
     if (!res.ok) return res.error
@@ -241,9 +251,11 @@ module.exports = {
       return H.truncate([
         `error: article-write 未生成可发布文章（项目 ${project}）：${why}。`,
         outcome.reason ? `> 隔离原因：${outcome.reason}` : '',
-        '> 请勿用相同参数立刻重试：先看 needs-review/*.reason.txt 的原因，' +
-        '或改用 style=B / style=D（非骨架写作流）后再生成。' +
-        ' 把本条错误如实转达用户，不要说「已成功生成」。',
+        '> 请勿用相同参数立刻重试，也不要只靠换 style 重试：' +
+        '先看 needs-review/*.reason.txt 的隔离原因，确认是稿件内容问题还是闸门判定问题。' +
+        ' 把本条错误与隔离原因如实转达用户，不要说「已成功生成」，' +
+        '也不要自行给出「改用某风格即可解决」的结论：' +
+        '隔离原因以 reason.txt 为准，换风格既不修复内容缺陷也不修复闸门判定。',
         '', '--- stdout tail ---', outcome.stdoutTail,
         outcome.stderrTail.trim() ? `\n--- stderr tail ---\n${outcome.stderrTail}` : '',
       ].filter(Boolean).join('\n'), H.MAX_OUTPUT)
