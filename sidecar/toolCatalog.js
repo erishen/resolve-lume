@@ -1,8 +1,8 @@
 'use strict'
 // Compact tool catalog injected into the chat system prompt.
 //
-// Why: the .lume bridge is bound by agent-httpd's `ToolRec.desc[161]`, and
-// deploy/gen-sidecar-tools.mjs enforces a <=148 B description per tool. With 99
+// Why: lume-core stores tool descriptions in `ToolRec.desc` (widened to 1024 B
+// on 2026-11-09, previously 160 B), and the generator caps each at 900 B. With 99
 // registered tools the model sees 99 near-identical one-liners and, when two
 // names look alike (juejin-draft / juejin-publish, shell / make), guesses wrong
 // or invents a name that does not exist (2026-11-09: same prompt produced a

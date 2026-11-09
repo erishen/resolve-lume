@@ -57,7 +57,7 @@ tool "calculator", "Evaluate basic arithmetic. req: expression. No variables or 
   return sidecar_tool("calculator", stringify(p));
 };
 
-tool "read-file", "Read a text file. rel-base=work/ req: path. Repo short name works (lume-a2a/README.md). Page with offset/limit. Never use to guess article paths.", {"path": "string", "offset": "int", "limit": "int"}, (p) => {
+tool "read-file", "[READ-ONLY] Read a text file (rel-base=work/, req: path, offset/limit paging). To write use write-file. Never use it to guess article paths.", {"path": "string", "offset": "int", "limit": "int"}, (p) => {
   return sidecar_tool("read-file", stringify(p));
 };
 
@@ -93,7 +93,7 @@ tool "dev-stats", "Dev stats: reads/CI/clone CSV. target in [report|juejin|segme
   return sidecar_tool("dev-stats", stringify(p));
 };
 
-tool "hot-news", "Generate compliant social copy for a hot topic (1-5 min). req: topic. Call DIRECTLY, never read files first. Paid provider needs approval.", {"topic": "string", "news_dir": "string", "platform": "string", "category": "string", "provider": "string"}, (p) => {
+tool "hot-news", "Generate compliant social copy for a hot topic (req: topic, 1-5 min). For publishing use hot-news-publish; for checking a draft use hot-news-check. Call DIRECTLY, never read files first.", {"topic": "string", "news_dir": "string", "platform": "string", "category": "string", "provider": "string"}, (p) => {
   return sidecar_tool("hot-news", stringify(p));
 };
 
@@ -113,7 +113,7 @@ tool "article-discover", "Scan workspace repos for NEW article projects. add=fal
   return sidecar_tool("article-discover", stringify(p));
 };
 
-tool "article-validate", "VALIDATE only, never publishes. project MUST be from enum (NEVER invent names like wordpress); omit project to list queue.", {"project": "string", "confirm": "bool"}, (p) => {
+tool "article-validate", "[READ-ONLY] VALIDATE an article, never publishes: to publish use article-publish. project MUST come from the enum (NEVER invent names like wordpress); omit project to list the queue.", {"project": "string", "confirm": "bool"}, (p) => {
   return sidecar_tool("article-validate", stringify(p));
 };
 
@@ -121,7 +121,7 @@ tool "article-write", "Write article? Call DIRECTLY with project=KEY; NEVER read
   return sidecar_tool("article-write", stringify(p));
 };
 
-tool "article-publish", "Publish ONE article to WordPress. Omit project = LIST queue (read-only). confirm=true REALLY publishes: only on explicit user publish request.", {"project": "string", "confirm": "bool"}, (p) => {
+tool "article-publish", "[APPROVAL][EXTERNAL] Publish ONE article to WordPress (confirm=true really publishes). To validate use article-validate; omit project to LIST the queue. Explicit user publish request only.", {"project": "string", "confirm": "bool"}, (p) => {
   return sidecar_tool("article-publish", stringify(p));
 };
 
@@ -173,15 +173,15 @@ tool "crm-task", "One personal-CRM pipeline: task in [crm-qa|follow-up-draft|wee
   return sidecar_tool("crm-task", stringify(p));
 };
 
-tool "write-file", "Write text to a file (allowed roots only). req: path, content. Needs human approval; report the real path, never claim it wrote on failure.", {"path": "string", "content": "string", "task": "string"}, (p) => {
+tool "write-file", "[APPROVAL] Write text to a file under allowed roots. req: path, content. To READ a file use read-file; to run commands use shell. Needs human approval; report the real path, never claim success on failure.", {"path": "string", "content": "string", "task": "string"}, (p) => {
   return sidecar_tool("write-file", stringify(p));
 };
 
-tool "shell", "Run ONE shell command (15s, 8KiB output cap). Human approval required on every call; quote the real output, never fake success or retry blindly.", {"command": "string"}, (p) => {
+tool "shell", "[APPROVAL] Run ONE shell command in the work dir (15s, 8KiB output cap). Needs approval on EVERY call. Use make for build targets and write-file for files; neither replaces shell. Quote real output; never fake success or retry blind.", {"command": "string"}, (p) => {
   return sidecar_tool("shell", stringify(p));
 };
 
-tool "make", "Run make in a project dir. req: dir; optional target. Human approval required; report exit status verbatim, do not assume the target passed.", {"dir": "string", "target": "string", "args": "string"}, (p) => {
+tool "make", "[APPROVAL] Run make in a project dir (req: dir, optional target). For ad-hoc commands use shell; this only runs make. Needs approval; report exit status verbatim, never assume the target passed.", {"dir": "string", "target": "string", "args": "string"}, (p) => {
   return sidecar_tool("make", stringify(p));
 };
 
@@ -197,19 +197,19 @@ tool "article-archive", "Archive/reorganise finished article projects (local fil
   return sidecar_tool("article-archive", stringify(p));
 };
 
-tool "hot-news-publish", "Publish a hot-news draft to its platform (EXTERNAL). Human approval required; only after an explicit user publish request.", {"platform": "string", "article": "string", "dry_run": "bool", "save_as_draft": "bool"}, (p) => {
+tool "hot-news-publish", "[APPROVAL][EXTERNAL] Publish a hot-news draft. For generating copy use hot-news; for a pre-flight check use hot-news-check. Needs approval; explicit publish request only.", {"platform": "string", "article": "string", "dry_run": "bool", "save_as_draft": "bool"}, (p) => {
   return sidecar_tool("hot-news-publish", stringify(p));
 };
 
-tool "build-juejin", "Build a Juejin draft payload from an article (local, no upload). Human approval required; report the artifact path.", {}, (p) => {
+tool "build-juejin", "[APPROVAL] Build a Juejin draft PAYLOAD locally (no upload). To actually save the draft use juejin-draft. Needs approval; report the artifact path.", {}, (p) => {
   return sidecar_tool("build-juejin", stringify(p));
 };
 
-tool "juejin-draft", "Save a Juejin DRAFT via platform API (external side effect). Human approval required; never call twice, never publish.", {}, (p) => {
+tool "juejin-draft", "[APPROVAL][EXTERNAL] Save a DRAFT to Juejin. Does NOT publish: use juejin-publish only on an explicit publish request; build-juejin only builds the payload. Needs approval; never call twice.", {}, (p) => {
   return sidecar_tool("juejin-draft", stringify(p));
 };
 
-tool "juejin-publish", "PUBLISH an article to Juejin (external, irreversible). Human approval required; only after an explicit user publish request.", {}, (p) => {
+tool "juejin-publish", "[APPROVAL][IRREVERSIBLE] PUBLISH to Juejin. For a draft use juejin-draft; for payload only use build-juejin. Needs approval; explicit user publish request only.", {}, (p) => {
   return sidecar_tool("juejin-publish", stringify(p));
 };
 

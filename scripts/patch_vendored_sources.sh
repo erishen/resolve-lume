@@ -59,3 +59,14 @@ if [ -d "$AH" ]; then
 else
   echo "[patch] 跳过：$AH 不存在（先 make vendor）"
 fi
+
+# ---- 4) lume-core: 单个工具描述上限 160B → 1024B -----------------------------
+# ToolRec.desc[161] 是「工具只能带一句话」的真正天花板（bridge_mcp.c 原样把该
+# 字段当 MCP description 发出）。99 工具面下，juejin-draft/juejin-publish、
+# shell/make 这类相近名字靠一句话分不开，模型只能猜。
+LC="$ROOT/lume-core"
+if [ -d "$LC" ]; then
+  python3 "$ROOT/deploy/patch_lume_core_tool_desc.py" "$LC"
+else
+  echo "[patch] 跳过：$LC 不存在（先 make vendor）"
+fi

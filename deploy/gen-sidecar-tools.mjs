@@ -114,7 +114,7 @@ function cutBytes(s, max) {
   return out
 }
 
-// C 侧 ToolRec.desc[161] 只允许 ~150B。article-write 的原始描述有 1.7KB，
+// C 侧 TOOL_DESC_MAX 已放宽到 2048B（tools.h），生成侧仍限 400B：既留出article-write 的原始描述有 1.7KB，
 // 直接按字节截断会把「不要先读文件 / 不要猜路径」这条最关键的行为约束切掉
 // ——正是它决定模型会不会绕去 read-file，然后误判「网关没挂载这个工具」。
 // 因此给超长描述的工具一份「行为优先」的精简版：核心指令在前，枚举在后，
@@ -125,16 +125,17 @@ function cutBytes(s, max) {
 // 「无需再 read-file 找 projects.json」、resume-tailor/hot-news 的
 // 「Do NOT read any files before calling」、dev-stats 的「禁止编造数字」
 // 全部丢失。这正是「模型绕去读文件→误判能力不存在」的同源根因，不能只给
-// article-write 打补丁。下面每条都把关键约束放在最前，且 ≤148B。
+// article-write 打补丁。下面每条都把关键约束放在最前，且 ≤900B（可写足
+// “用 A 不要用 B” 的区分句，名字相近的一对工具尤其需要）。
 const DESC_OVERRIDE = {
   // 2026-11-09 高危工具（人工审批门兜底）：描述里先写「需要批准」和「不要
   // 假装成功」，避免 148B 截断把约束吃掉。
   'write-file':
-    'Write text to a file (allowed roots only). req: path, content. Needs human approval; report the real path, never claim it wrote on failure.',
+    '[APPROVAL] Write text to a file under allowed roots. req: path, content. To READ a file use read-file; to run commands use shell. Needs human approval; report the real path, never claim success on failure.',
   'shell':
-    'Run ONE shell command (15s, 8KiB output cap). Human approval required on every call; quote the real output, never fake success or retry blindly.',
+    '[APPROVAL] Run ONE shell command in the work dir (15s, 8KiB output cap). Needs approval on EVERY call. Use make for build targets and write-file for files; neither replaces shell. Quote real output; never fake success or retry blind.',
   'make':
-    'Run make in a project dir. req: dir; optional target. Human approval required; report exit status verbatim, do not assume the target passed.',
+    '[APPROVAL] Run make in a project dir (req: dir, optional target). For ad-hoc commands use shell; this only runs make. Needs approval; report exit status verbatim, never assume the target passed.',
   'browser-open':
     'Open a URL in the shared browser and screenshot it. Human approval required; describe what actually rendered, not what you expect.',
   'browser-screenshot':
@@ -142,17 +143,17 @@ const DESC_OVERRIDE = {
   'article-archive':
     'Archive/reorganise finished article projects (local file moves). Human approval required; report exactly what moved.',
   'build-juejin':
-    'Build a Juejin draft payload from an article (local, no upload). Human approval required; report the artifact path.',
+    '[APPROVAL] Build a Juejin draft PAYLOAD locally (no upload). To actually save the draft use juejin-draft. Needs approval; report the artifact path.',
   'juejin-draft':
-    'Save a Juejin DRAFT via platform API (external side effect). Human approval required; never call twice, never publish.',
+    '[APPROVAL][EXTERNAL] Save a DRAFT to Juejin. Does NOT publish: use juejin-publish only on an explicit publish request; build-juejin only builds the payload. Needs approval; never call twice.',
   'juejin-publish':
-    'PUBLISH an article to Juejin (external, irreversible). Human approval required; only after an explicit user publish request.',
+    '[APPROVAL][IRREVERSIBLE] PUBLISH to Juejin. For a draft use juejin-draft; for payload only use build-juejin. Needs approval; explicit user publish request only.',
   'wechat-draft':
     'Create a WeChat MP draft (external side effect). Human approval required; creates a draft only, does not push to followers.',
   'sf-pw-publish':
     'Publish to SegmentFault via Playwright (external, irreversible). Human approval required; explicit user request only.',
   'hot-news-publish':
-    'Publish a hot-news draft to its platform (EXTERNAL). Human approval required; only after an explicit user publish request.',
+    '[APPROVAL][EXTERNAL] Publish a hot-news draft. For generating copy use hot-news; for a pre-flight check use hot-news-check. Needs approval; explicit publish request only.',
   'capabilities':
     'Ask FIRST for publish/make/shell/PSE-review or "is X available": lists ALL tools and which are exposed to you. NEVER claim a capability is missing.',
   'article-write':
@@ -162,7 +163,7 @@ const DESC_OVERRIDE = {
   'echo': 'Echo text back. req: text. Use only to confirm the tool bridge is alive.',
   'calculator': 'Evaluate basic arithmetic. req: expression. No variables or functions.',
   'read-file':
-    'Read a text file. rel-base=work/ req: path. Repo short name works (lume-a2a/README.md). Page with offset/limit. Never use to guess article paths.',
+    '[READ-ONLY] Read a text file (rel-base=work/, req: path, offset/limit paging). To write use write-file. Never use it to guess article paths.',
   'analyze-dir':
     'Recursively scan a directory, bounded report. rel-base=work/ req: dir. Repo short names resolve. Read-only; use for unfamiliar folders.',
   'analyze-code-dir':
@@ -180,7 +181,7 @@ const DESC_OVERRIDE = {
   'dev-stats':
     'Dev stats: reads/CI/clone CSV. target in [report|juejin|segmentfault|ci|actions]. Never use shell/read-file here; quote only tool output.',
   'hot-news':
-    'Generate compliant social copy for a hot topic (1-5 min). req: topic. Call DIRECTLY, never read files first. Paid provider needs approval.',
+    'Generate compliant social copy for a hot topic (req: topic, 1-5 min). For publishing use hot-news-publish; for checking a draft use hot-news-check. Call DIRECTLY, never read files first.',
   'hot-news-fetch':
     'Fetch hot-news snapshots into news/ (pipeline step 1). sources is a COMMA-SEPARATED STRING like "weibo,infoq", NOT an array.',
   'hot-news-topics':
@@ -190,9 +191,9 @@ const DESC_OVERRIDE = {
   'article-discover':
     'Scan workspace repos for NEW article projects. add=false = dry-run (default writes projects.json). Returns its path: NEVER read-file to find it.',
   'article-validate':
-    'VALIDATE only, never publishes. project MUST be from enum (NEVER invent names like wordpress); omit project to list queue.',
+    '[READ-ONLY] VALIDATE an article, never publishes: to publish use article-publish. project MUST come from the enum (NEVER invent names like wordpress); omit project to list the queue.',
   'article-publish':
-    'Publish ONE article to WordPress. Omit project = LIST queue (read-only). confirm=true REALLY publishes: only on explicit user publish request.',
+    '[APPROVAL][EXTERNAL] Publish ONE article to WordPress (confirm=true really publishes). To validate use article-validate; omit project to LIST the queue. Explicit user publish request only.',
   'pick-post':
     'Pick one published WordPress post at random (read-only). Requires ERISHEN_BASE in .env.',
   'resume-tailor':
@@ -218,11 +219,11 @@ const DESC_OVERRIDE = {
 }
 
 function buildDesc(t) {
-  if (DESC_OVERRIDE[t.name]) return cutBytes(DESC_OVERRIDE[t.name], 148)
+  if (DESC_OVERRIDE[t.name]) return cutBytes(DESC_OVERRIDE[t.name], 900)
   const props = (t.parameters && t.parameters.properties) || {}
   const req = (t.parameters && t.parameters.required) || []
   const one = String(t.description || '').replace(/\s+/g, ' ').trim()
-  const LIMIT = 148 // C 侧 ToolRec.desc[161] / TOOL_DESC_MAX，留 13B 余量（截断省略号与转义）
+  const LIMIT = 900 // lume-core ToolRec.desc 已放宽到 1024B，留 124B 余量
 
   // 顺序很重要：必需提示（基准路径、必填参数）先占位，再把原文描述截到剩余空间。
   // 之前反着写，导致 36 个「描述本来就超 150B」的工具在截断时把提示一起丢了。
@@ -275,7 +276,7 @@ for (const t of tools) {
   const db = Buffer.byteLength(buildDesc(t), 'utf8')
   const pk = Object.keys((t.parameters && t.parameters.properties) || {})
   if (nb > 40) problems.push(`name 超 40B: ${t.name} (${nb})`)
-  if (db > 150) problems.push(`desc 超 150B: ${t.name} (${db})`)
+  if (db > 900) problems.push(`desc 超 900B: ${t.name} (${db})`)
   for (const [k, v] of Object.entries((t.parameters && t.parameters.properties) || {})) {
     const ty = TYPE[(v && v.type) || 'string']
     if (!ty) problems.push(`无法映射的类型 ${t.name}.${k}: ${v && v.type}`)
@@ -284,11 +285,11 @@ for (const t of tools) {
   if (pk.length > 12) problems.push(`参数过多（tools/list 帧压力）: ${t.name} (${pk.length})`)
 }
 // 生产用的默认集必须「每个工具都有行为优先精简版」。缺一条就说明新增工具
-// 时忘了写，C 侧 148B 截断会静默吞掉关键约束 —— 这正是上一轮事故的形态。
+// 时忘了写，C 侧截断会静默吞掉关键约束 —— 这正是上一轮事故的形态。
 if (!has('--all') && !has('--only')) {
   for (const t of tools) {
-    if (!DESC_OVERRIDE[t.name] || Buffer.byteLength(DESC_OVERRIDE[t.name], 'utf8') > 148) {
-      problems.push(`缺少 ≤148B 的行为优先精简描述: ${t.name}`)
+    if (!DESC_OVERRIDE[t.name] || Buffer.byteLength(DESC_OVERRIDE[t.name], 'utf8') > 900) {
+      problems.push(`缺少 ≤900B 的行为优先精简描述: ${t.name}`)
     }
   }
 }

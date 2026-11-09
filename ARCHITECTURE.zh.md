@@ -203,10 +203,10 @@ POST /api/tools/call (来自 agent 桥 SIDECAR_TOOLS_URL)
 | 声明式调用兜底 | `findDeclaredToolCall` + 有界续推 | `agent.c` 的 `nudges` 护栏：正文点名了已注册工具却没发 tool-call → 追加 user 修正消息，最多 2 次；`tools_mentioned()` 同时匹配 `sidecar__x` 与裸名 `x` |
 | 正文伪 tool-call 清洗 | `stripMalformedToolTags` | `agent.c` 的 `looks_like_tool_json()`：正文里出现 `"arguments"` / `"tool_calls"` / `"function"` 时按「工具调用写成了正文」续推；`tools.c` / `mcp.c` 的未知工具错误补 `(did you mean: …)` 候选 |
 | 空回复兜底 | `emptyReplyFallback` | 工具已执行但本轮无正文 → 续推「请用中文总结以上工具结果」，最多 2 次（与上条共用 `nudges` 预算） |
-| 完整工具描述 | 完整 `description` | 受 `ToolRec.desc[161]` 限制仍是一句话；用 `sidecar/toolCatalog.js` 生成的紧凑目录（99 条 ≈ 2.6 KB）补进 system，明确「清单外的名字会直接失败」 |
+| 完整工具描述 | 完整 `description` | `lume-core` 的 `ToolRec.desc` 已由补丁从 160B 放宽到 1024B（生成侧限 900B），高危/易混工具的描述写足「用 A 不要用 B」;另外仍用 `sidecar/toolCatalog.js` 的紧凑目录（99 条 ≈ 2.6 KB）兜住「名字相近」这一层 |
 | — | — | `RoundState.spoken`（4 KiB 上限）留存本轮正文，供上述护栏判定；`round_free()` 负责释放 |
 
-目录每 60 s 缓存一次（`getToolCatalogText` → 后端 `/react/api/tools`），chat 轮次只多一次本地 GET；后端不可达时退化为不注入（不阻塞对话）。三处 C 护栏都由 `deploy/patch_agent_httpd_guards.py` 幂等维持，并挂在 `scripts/patch_vendored_sources.sh` 的第三段（与 session 补丁、lume-core 超时补丁互相独立）。
+目录每 60 s 缓存一次（`getToolCatalogText` → 后端 `/react/api/tools`），chat 轮次只多一次本地 GET；后端不可达时退化为不注入（不阻塞对话）。三处 C 护栏由 `deploy/patch_agent_httpd_guards.py` 幂等维持；`scripts/patch_vendored_sources.sh` 现在有四个互相独立的补丁段（lume-core 超时、session stamp、循环护栏、lume-core 工具描述上限），任一「已打」都不会跳过其余。
 
 --- 
 

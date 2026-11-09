@@ -227,9 +227,15 @@ def main(root):
         print(f'[patch] skip: {root} missing', file=sys.stderr)
         return 0
     agent_c = root / 'src/agent/agent.c'
-    if MARKER in agent_c.read_text(encoding='utf-8'):
-        print('[patch] agent loop guards already present')
-        return 0
+    agent_h = root / 'src/agent/agent.h'
+    # Idempotence marker: the guard needs all three pieces (helper, spoken buffer,
+    # nudge counter). Detect on real code, not on a comment we might rename.
+    if agent_c.is_file() and agent_h.is_file():
+        c = agent_c.read_text(encoding='utf-8')
+        h = agent_h.read_text(encoding='utf-8')
+        if 'tools_mentioned(' in c and 'looks_like_tool_json(' in c and 'sbuf spoken;' in h:
+            print('[patch] agent loop guards already present')
+            return 0
     ok = patch_file(root / 'src/agent/agent.h', [(HUNK_HEADER[0], HUNK_HEADER[1], 'RoundState spoken')])
     if ok:
         ok = patch_file(agent_c, [

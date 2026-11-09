@@ -92,7 +92,9 @@ test('every exposed tool has a behavioral desc and no retry-bait truncation', ()
   assert.ok(rows.length >= 24, `only ${rows.length} tools exposed`)
   for (const [, name, raw] of rows) {
     const desc = JSON.parse(raw)
-    assert.ok(Buffer.byteLength(desc, 'utf8') <= 150, `${name} desc over C limit`)
+    // lume-core ToolRec.desc is 1024 B as of 2026-11-09 (was 160); the generator
+    // caps at 900 so the bridge never truncates mid-sentence.
+    assert.ok(Buffer.byteLength(desc, 'utf8') <= 900, `${name} desc over C limit`)
     assert.ok(desc.length > 25, `${name} desc looks empty`)
   }
   const names = rows.map((r) => r[1])

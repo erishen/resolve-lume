@@ -617,10 +617,11 @@ function taskForChat(body) {
 }
 
 // ---------- tool catalog (system-prompt decoration) ----------
-// .lume descriptions are capped at 148 B, so the model gets 99 indistinguishable
-// one-liners. Inject an exact-name catalog built from the backend's flat tool
-// list (it already merges built-ins + all MCP bridges). Cached for a minute so a
-// chat turn costs at most one extra localhost GET.
+// 99 tool schemas still dwarf what a small model can weigh, and names that differ
+// by one word (juejin-draft / juejin-publish, shell / make) stay confusable even
+// with the 1024 B description budget lume-core now allows. Inject an exact-name
+// catalog built from the backend's flat tool list (it already merges built-ins +
+// all MCP bridges), cached for a minute so a chat turn costs one localhost GET.
 const CATALOG_TTL_MS = 60 * 1000
 // test seam: tests can set this to a fixed array and skip the HTTP fetch
 const catalogState = { at: 0, text: '', tools: null }
