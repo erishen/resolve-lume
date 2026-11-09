@@ -49,6 +49,18 @@ const DATA_DIR = path.join(ROOT, '.data-sidecar')
 const SIDECAR_PIDFILE = path.join(DATA_DIR, 'sidecar.pid')
 const LAUNCHER_PIDFILE = path.join(DATA_DIR, 'launcher.pid')
 const SIDECAR_LOGFILE = path.join(DATA_DIR, 'sidecar.log')
+// This log carries every user message and tool trace (investment amounts, resumes).
+// Keep one bounded generation: rotate at 10 MB, keep a single .1 backup, and
+// create the active file 0600 so another local account cannot read the chat.
+const LOG_MAX_BYTES = 10 * 1024 * 1024
+function rotateSidecarLog() {
+  try {
+    if (fs.statSync(SIDECAR_LOGFILE).size < LOG_MAX_BYTES) return
+    const backup = SIDECAR_LOGFILE + '.1'
+    try { fs.unlinkSync(backup) } catch { /* no previous backup */ }
+    fs.renameSync(SIDECAR_LOGFILE, backup)
+  } catch { /* first run: nothing to rotate */ }
+}
 
 // ---------- 可调参数 ----------
 const LAUNCHER_PORT = parseInt(process.env.LAUNCHER_PORT || '3099', 10)
@@ -136,7 +148,9 @@ function spawnChild() {
     restartTimer = null
   }
   stopping = false
+  rotateSidecarLog()
   const logFd = fs.openSync(SIDECAR_LOGFILE, 'a')
+  try { fs.chmodSync(SIDECAR_LOGFILE, 0o600) } catch { /* best effort */ }
   // 非 detached：子进程与 launcher 同进程组，launcher 直接监听 'exit'。
   // env 只透传给子脚本本身；具体业务 env 白名单由 start-host.sh 内部 export。
   child = spawn('bash', [SIDECAR_SCRIPT], {

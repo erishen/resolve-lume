@@ -7,6 +7,8 @@ tools: sidecar__read-file, sidecar__write-file, sidecar__shell, sidecar__skill-r
 
 # 每周投资回顾（Weekly Investment）
 
+开始前先用一句话说明数据去向：本次会把持仓明细与金额发送给所选模型服务商（第三方 LLM），报告文件只落在本机。
+
 ## 适用场景
 
 用户想要一份基于**本地真实持仓快照**的投资回顾/周报。数据来自 autogen-pse 的 portfolio-review 管线（asset-lens 计算 + money-csv 快照）。周报由 PSE 三角色流水线（pse-review）生成，质量高、可复用。

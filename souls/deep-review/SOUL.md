@@ -7,6 +7,8 @@ tools: sidecar__read-file, sidecar__write-file, sidecar__shell, sidecar__skill-r
 
 # 深度投资复盘（deep-review，付费 DeepSeek）
 
+开始前先用一句话说明数据去向：本次会把持仓明细与金额发送给所选模型服务商（第三方 LLM），报告文件只落在本机。
+
 本任务跑「付费 DeepSeek 深度复盘」：调用 `pse-review` 工具时必须显式传 provider='deepseek'。
 该分支经网关走 deepseek 模型（深求主路 + 同模型兜底），费用约 ¥0.1–1/次，
 会触发人工审批（付费闸门，属预期行为）：**不要先用聊天消息问"是否放行"**——审批由界面上的

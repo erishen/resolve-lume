@@ -26,7 +26,7 @@ const TASK_COPY = {
   'weekly-investment': {
     name: '投资分析',
     description:
-      '投资组合数据体检 + PSE 三角色周报：先刷新快照并扫描异常，再产出组合概览、收益点评、风险警示与调仓建议。',
+      '投资组合数据体检 + PSE 三角色周报：先刷新快照并扫描异常，再产出组合概览、收益点评、风险警示与调仓建议。注意：会把持仓明细发送给所选模型服务商。',
   },
   'code-review': {
     name: '代码审查',
@@ -82,7 +82,7 @@ const TASK_COPY = {
   'deep-review': {
     name: '深度投资复盘',
     description:
-      '用付费 DeepSeek 模型驱动 autogen-pse 多智能体团队（Planner/Specialist/Evaluator + 个人知识库检索）跑完整组合复盘流水线，生成深度周报；付费模型、会触发审批，适合周度正式复盘。',
+      '用付费 DeepSeek 模型驱动 autogen-pse 多智能体团队（Planner/Specialist/Evaluator + 个人知识库检索）跑完整组合复盘流水线，生成深度周报；付费模型、会触发审批，适合周度正式复盘。注意：会把持仓明细发送给所选模型服务商。',
   },
   general: {
     name: '通用对话',
