@@ -40,10 +40,15 @@ function hasExplicitPaidIntent(message) {
 /**
  * resolve-studio sends { messages, model, ... }; agent-httpd expects
  * { message, history }. The selected task's soul becomes the task-level system
- * prompt, the frontend-computed systemPrompt is appended after it, and the
- * tool discipline is always last (most authoritative).
+ * prompt, the frontend-computed systemPrompt is appended after it, the compact
+ * tool catalog sits right above the discipline block (it names every callable
+ * tool so a small model stops guessing), and the tool discipline is always last
+ * (most authoritative).
+ *
+ * `toolCatalog` is optional: server.js passes renderToolCatalog()'s output, the
+ * tests pass a fixture or nothing.
  */
-function buildAgentChatBody(body, task) {
+function buildAgentChatBody(body, task, toolCatalog) {
   const messages = Array.isArray(body.messages) ? body.messages : []
   const lastUser = [...messages].reverse().find((m) => m.role === 'user')
   const history = messages
@@ -66,6 +71,9 @@ function buildAgentChatBody(body, task) {
   if (task && task.systemPrompt) parts.push(task.systemPrompt)
   if (typeof body.systemPrompt === 'string' && body.systemPrompt) {
     parts.push(body.systemPrompt)
+  }
+  if (typeof toolCatalog === 'string' && toolCatalog.trim()) {
+    parts.push(toolCatalog.trim())
   }
   parts.push(TOOL_DISCIPLINE)
   agentBody.system = parts.join('\n\n---\n\n')

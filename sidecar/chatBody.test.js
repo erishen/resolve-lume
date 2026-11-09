@@ -93,6 +93,22 @@ test('paid-model intent needs explicit, non-negated user wording', () => {
   assert.equal(hasExplicitPaidIntent('可以付费，质量优先'), true)
 })
 
+cases.push(['tool catalog sits above the discipline block', () => {
+  const body = buildAgentChatBody(
+    { messages: [{ role: 'user', content: 'hi' }] },
+    { systemPrompt: 'SOUL', includeTools: [] },
+    '# 可用工具目录\n- sidecar__shell — run shell'
+  )
+  const sys = body.system
+  assert.ok(sys.includes('SOUL'))
+  // catalog after the soul prompt, discipline last (most authoritative)
+  assert.ok(sys.indexOf('# 可用工具目录') > sys.indexOf('SOUL'))
+  assert.ok(sys.indexOf('工具调用纪律') > sys.indexOf('# 可用工具目录'))
+  // no catalog passed -> unchanged shape (backend-computed systemPrompt only)
+  const plain = buildAgentChatBody({ messages: [{ role: 'user', content: 'hi' }] }, undefined, '')
+  assert.ok(!plain.system.includes('可用工具目录'))
+}])
+
 let failed = 0
 for (const [name, fn] of cases) {
   try {

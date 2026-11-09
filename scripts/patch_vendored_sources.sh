@@ -48,3 +48,14 @@ if [ -f "$MC" ]; then
 else
   echo "[patch] 跳过：$MC 不存在（先 make vendor）"
 fi
+
+# ---- 3) agent-httpd: ReAct 循环的 studio 式护栏 -----------------------------
+# 模型只把工具调用写成正文（或只描述计划、或工具跑完哑火）时，C 循环原先直接
+# 当最终答案收尾；这里补 4 KiB 的 round 文本留存 + 两次有界续推，并把「参数
+# 写成正文 JSON」识别出来，再对未知工具名给出候选（small model 自纠）。
+AH="$ROOT/agent-httpd"
+if [ -d "$AH" ]; then
+  python3 "$ROOT/deploy/patch_agent_httpd_guards.py" "$AH"
+else
+  echo "[patch] 跳过：$AH 不存在（先 make vendor）"
+fi

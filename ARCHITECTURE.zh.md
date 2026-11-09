@@ -193,7 +193,22 @@ POST /api/tools/call (来自 agent 桥 SIDECAR_TOOLS_URL)
 
 内置工具共 40 个 schema（`builtin-tools.json` 从 resolve-studio `/api/tools` 抓取），其中 **9 个本地真实现**（echo / calc / read / write / shell / analyze-dir / skill-run / system-info / privacy-audit），其余为占位提示。`BUILTIN_NAMES` 是全集，`AGENT_TOOL_ALLOW` 是 agent 桥可调用的子集（服务端强制）。
 
----
+### 4.5 工具面可读性：紧凑目录 / 任务自动匹配 / 循环护栏
+
+99 个工具全暴露 + `.lume` 桥 148 B 描述上限，会让小模型在名字相近的工具间靠猜：同一句「用 shell 执行 echo」，有的会话正确调 `sidecar__shell`，有的编造 `execute_code`，有的把 `"arguments": {...}` 当正文吐出来。resolve-studio 不出这个问题不是模型更强（两边默认都走 `chat` 别名，网关实际落到 qwen3.8-27b），而是多了四层护栏；lume 目前已补齐三层，第四层（描述长度）受 C 结构体约束：
+
+| 护栏 | studio | lume 现状 |
+|---|---|---|
+| 工具面按最新用户消息自动收窄 | `tasks.resolve(taskId, messages)` | `sidecar/taskMatch.js` + `buildTasks()` 的 `triggers` 匹配；显式 `taskId` 优先（`server.js` 的 `taskForChat`），命中即打 `task auto-match -> <id>` 日志 |
+| 声明式调用兜底 | `findDeclaredToolCall` + 有界续推 | `agent.c` 的 `nudges` 护栏：正文点名了已注册工具却没发 tool-call → 追加 user 修正消息，最多 2 次；`tools_mentioned()` 同时匹配 `sidecar__x` 与裸名 `x` |
+| 正文伪 tool-call 清洗 | `stripMalformedToolTags` | `agent.c` 的 `looks_like_tool_json()`：正文里出现 `"arguments"` / `"tool_calls"` / `"function"` 时按「工具调用写成了正文」续推；`tools.c` / `mcp.c` 的未知工具错误补 `(did you mean: …)` 候选 |
+| 空回复兜底 | `emptyReplyFallback` | 工具已执行但本轮无正文 → 续推「请用中文总结以上工具结果」，最多 2 次（与上条共用 `nudges` 预算） |
+| 完整工具描述 | 完整 `description` | 受 `ToolRec.desc[161]` 限制仍是一句话；用 `sidecar/toolCatalog.js` 生成的紧凑目录（99 条 ≈ 2.6 KB）补进 system，明确「清单外的名字会直接失败」 |
+| — | — | `RoundState.spoken`（4 KiB 上限）留存本轮正文，供上述护栏判定；`round_free()` 负责释放 |
+
+目录每 60 s 缓存一次（`getToolCatalogText` → 后端 `/react/api/tools`），chat 轮次只多一次本地 GET；后端不可达时退化为不注入（不阻塞对话）。三处 C 护栏都由 `deploy/patch_agent_httpd_guards.py` 幂等维持，并挂在 `scripts/patch_vendored_sources.sh` 的第三段（与 session 补丁、lume-core 超时补丁互相独立）。
+
+--- 
 
 ## 5. PSE 三角色编排
 

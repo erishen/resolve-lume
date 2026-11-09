@@ -33,6 +33,8 @@ const progress = require('./progress')
 const approval = require('./approval')
 const toolGuard = require('./toolGuard')
 const { buildAgentChatBody, hasExplicitPublishIntent, hasExplicitPaidIntent } = require('./chatBody')
+const { renderToolCatalog } = require('./toolCatalog')
+const { matchTaskByMessage } = require('./taskMatch')
 
 // Human-approval set lives in builtin-exec (single source of truth, shared with
 // the security test). resolve-studio parity: tools stay visible; each gated
@@ -602,6 +604,66 @@ function getTask(id) {
   if (!id) return undefined
   return buildTasks().find((t) => t.id === id)
 }
+
+// Explicit taskId wins (manual control, exactly like studio); otherwise auto-match.
+function taskForChat(body) {
+  const explicit = getTask(body && body.taskId)
+  if (explicit) return explicit
+  const messages = Array.isArray(body && body.messages) ? body.messages : []
+  const lastUser = [...messages].reverse().find((m) => m && m.role === 'user')
+  const auto = matchTaskByMessage(lastUser && lastUser.content, buildTasks())
+  if (auto) console.log(`[sidecar] task auto-match -> ${auto.id}`)
+  return auto
+}
+
+// ---------- tool catalog (system-prompt decoration) ----------
+// .lume descriptions are capped at 148 B, so the model gets 99 indistinguishable
+// one-liners. Inject an exact-name catalog built from the backend's flat tool
+// list (it already merges built-ins + all MCP bridges). Cached for a minute so a
+// chat turn costs at most one extra localhost GET.
+const CATALOG_TTL_MS = 60 * 1000
+// test seam: tests can set this to a fixed array and skip the HTTP fetch
+const catalogState = { at: 0, text: '', tools: null }
+
+function backendTools() {
+  const u = new URL(AGENT_URL)
+  return new Promise((resolve) => {
+    const req = http.request(
+      { method: 'GET', hostname: u.hostname, port: u.port || 80, path: '/react/api/tools', timeout: 4000 },
+      (resp) => {
+        let body = ''
+        resp.on('data', (c) => (body += c))
+        resp.on('end', () => {
+          try {
+            const data = JSON.parse(body)
+            resolve(Array.isArray(data.tools) ? data.tools : [])
+          } catch {
+            resolve([])
+          }
+        })
+      }
+    )
+    req.on('error', () => resolve([]))
+    req.on('timeout', () => {
+      req.destroy()
+      resolve([])
+    })
+    req.end()
+  })
+}
+
+async function getToolCatalogText() {
+  const now = Date.now()
+  if (catalogState.at && now - catalogState.at < CATALOG_TTL_MS) return catalogState.text
+  const tools = await backendTools()
+  const text = renderToolCatalog(tools)
+  if (text) {
+    catalogState.at = now
+    catalogState.text = text
+  }
+  return text
+}
+
 const SCOPES = [
   { id: 'core', name: '核心', description: '仅内置工具', includeTools: [] },
   { id: 'files', name: '+文件', description: '允许读写文件', includeTools: ['read', 'write', 'list'] },
@@ -863,7 +925,9 @@ async function handle(req, res) {
     // Shape translation + task soul + always-on tool discipline live in
     // chatBody.js (pure, unit-tested). Without the discipline a taskMode=auto
     // run sees all 24 cross-domain tools with no task-level constraint.
-    const agentBody = buildAgentChatBody(body, getTask(body.taskId))
+    // Auto-narrow the task from the latest user message (studio parity) and
+    // decorate the prompt with the exact-name tool catalog.
+    const agentBody = buildAgentChatBody(body, taskForChat(body), await getToolCatalogText())
     // The UI toggle picks the route: /react/api/pse always runs the three-role
     // orchestrator, /react/api/chat is the single ReAct agent (the container
     // runs with PSE_ENABLED=false so this route is genuinely non-PSE).
