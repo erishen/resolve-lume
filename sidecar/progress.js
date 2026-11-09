@@ -106,6 +106,24 @@ function broadcastToActiveChat(text) {
   }
 }
 
+/** Newest registered chat stream (the one a tool call is causally downstream of). */
+function latestChatStream() {
+  let latest = null
+  for (const s of streams.values()) {
+    if (!latest || s.id > latest.id) latest = s
+  }
+  return latest
+}
+
+function latestChatStreamId() {
+  const s = latestChatStream()
+  return s ? s.id : null
+}
+
+function activeChatStreamIds() {
+  return [...streams.keys()]
+}
+
 function approvalRequestFrame(call) {
   return `event: approval-request\ndata: ${JSON.stringify({ call })}\n\n`
 }
@@ -117,11 +135,7 @@ function approvalRequestFrame(call) {
  * newest-stream correlation rule.
  */
 function sendApprovalRequest(call) {
-  if (streams.size === 0) return false
-  let latest = null
-  for (const s of streams.values()) {
-    if (!latest || s.id > latest.id) latest = s
-  }
+  const latest = latestChatStream()
   const res = latest && latest.res
   if (!res || res.writableEnded || res.destroyed) return false
   try {
@@ -261,6 +275,8 @@ module.exports = {
   reasoningFrame,
   approvalRequestFrame,
   sendApprovalRequest,
+  latestChatStreamId,
+  activeChatStreamIds,
   registerChatStream,
   unregisterChatStream,
   activeChatStreamCount,

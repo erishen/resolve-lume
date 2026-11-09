@@ -21,7 +21,34 @@
 const crypto = require('node:crypto')
 const progress = require('./progress')
 
-const TIMEOUT_MS = Number(process.env.SIDECAR_APPROVAL_TIMEOUT_MS || 60_000)
+// studio uses 60s; a local single operator often needs longer to notice the
+// prompt while a slow tool is running, so default to 120s (still bounded — a
+// timeout is a refusal, the loop can never hang).
+const TIMEOUT_MS = Number(process.env.SIDECAR_APPROVAL_TIMEOUT_MS || 120_000)
+
+// Per-run approval memo (resolve-studio's `approvedTools`): once a human
+// approves a tool inside one chat run, later calls of THAT tool in the SAME run
+// skip the prompt (the UI shows "approval skipped (already approved this run)").
+// Keyed by chat stream id, which is the closest thing lume has to a run id.
+/** @type {Map<number, Set<string>>} */
+const approvedByStream = new Map()
+
+function memoGet(streamId, name) {
+  const set = approvedByStream.get(streamId)
+  return !!(set && set.has(name))
+}
+
+function memoAdd(streamId, name) {
+  if (streamId == null) return
+  let set = approvedByStream.get(streamId)
+  if (!set) approvedByStream.set(streamId, (set = new Set()))
+  set.add(name)
+  // Drop memos of finished chats; they are worthless and would leak slowly.
+  if (approvedByStream.size > 8) {
+    const live = new Set(progress.activeChatStreamIds())
+    for (const id of approvedByStream.keys()) if (!live.has(id)) approvedByStream.delete(id)
+  }
+}
 
 /** @type {Map<string, {resolve:Function, timer:NodeJS.Timeout}>} */
 const pending = new Map()
@@ -39,6 +66,10 @@ function request(name, args) {
   if (progress.activeChatStreamCount() === 0) {
     return Promise.resolve({ decision: 'reject', reason: 'no-chat', call: null })
   }
+  const streamId = progress.latestChatStreamId()
+  if (memoGet(streamId, name)) {
+    return Promise.resolve({ decision: 'approve', reason: 'memo', call: null })
+  }
   const call = { id: newCallId(), name, arguments: args || {} }
   if (!progress.sendApprovalRequest(call)) {
     return Promise.resolve({ decision: 'reject', reason: 'no-chat', call })
@@ -49,7 +80,7 @@ function request(name, args) {
       pending.delete(call.id)
       resolve({ decision: 'reject', reason: 'timeout', call })
     }, TIMEOUT_MS)
-    pending.set(call.id, { resolve, timer })
+    pending.set(call.id, { resolve, timer, streamId, name })
   })
 }
 
@@ -59,6 +90,7 @@ function resolve(callId, decision) {
   if (!entry) return false
   pending.delete(String(callId))
   clearTimeout(entry.timer)
+  if (decision === 'approve') memoAdd(entry.streamId, entry.name)
   entry.resolve({ decision: decision === 'approve' ? 'approve' : 'reject', call: null, reason: 'user' })
   return true
 }
@@ -71,6 +103,7 @@ function pendingCount() {
 function _clearAll() {
   for (const [, entry] of pending) clearTimeout(entry.timer)
   pending.clear()
+  approvedByStream.clear()
 }
 
 module.exports = { request, resolve, pendingCount, TIMEOUT_MS, _clearAll }

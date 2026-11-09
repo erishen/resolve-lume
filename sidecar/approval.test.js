@@ -65,6 +65,38 @@ test('timeout is treated as a rejection (loop can never hang)', async () => {
   progress.unregisterChatStream(id)
 })
 
+test('approval is remembered per run: same tool does not prompt twice', async () => {
+  const { res, frames } = fakeStream()
+  const id = progress.registerChatStream(res, { userMessage: '跑两个 make' })
+  const p1 = approval.request('make', { dir: 'work/a' })
+  await new Promise((r) => setTimeout(r, 5))
+  approval.resolve(JSON.parse(frames[0].split('data: ')[1]).call.id, 'approve')
+  assert.equal((await p1).decision, 'approve')
+  const r2 = await approval.request('make', { dir: 'work/b' })
+  assert.equal(r2.decision, 'approve')
+  assert.equal(r2.reason, 'memo')
+  assert.equal(frames.length, 1, 'no second prompt for the same tool in the same run')
+  progress.unregisterChatStream(id)
+  // A new run must ask again — the memo is per run, not permanent.
+  const s2 = fakeStream()
+  const id2 = progress.registerChatStream(s2.res, { userMessage: '再跑一个 make' })
+  const p3 = approval.request('make', { dir: 'work/c' })
+  await new Promise((r) => setTimeout(r, 5))
+  assert.equal(s2.frames.length, 1, 'new run prompts again')
+  approval.resolve(JSON.parse(s2.frames[0].split('data: ')[1]).call.id, 'reject')
+  assert.equal((await p3).decision, 'reject')
+  progress.unregisterChatStream(id2)
+})
+
+test('arg-level rule: read-only article-publish is not gated, confirm=true is', () => {
+  const B = require('./builtin-exec')
+  assert.equal(B.needsApproval('article-publish', { project: 'x' }), false)
+  assert.equal(B.needsApproval('article-publish', { project: 'x', confirm: true }), true)
+  assert.equal(B.needsApproval('shell', { command: 'pwd' }), true)
+  assert.equal(B.needsApproval('read-file', { path: 'x' }), false)
+  assert.equal(B.needsApproval('pse-review', { provider: 'deepseek' }), false, 'paid tier uses the intent gate')
+})
+
 test('resolving an unknown or late callId applies nothing', () => {
   assert.equal(approval.resolve('call-doesnotexist', 'approve'), false)
 })

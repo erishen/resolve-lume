@@ -966,7 +966,7 @@ async function handle(req, res) {
       if (dup) return send(res, 200, { name: toolName, result: dup })
       // Human-in-the-loop gate (resolve-studio parity, 2026-11-09). Runs after
       // the cheap refusals above so a rejected-payload call never prompts.
-      if (GATED.has(toolName)) {
+      if (builtin.needsApproval(toolName, toolArgs)) {
         const ap = await approval.request(toolName, toolArgs)
         console.log(`[approval-gate] tool=${toolName} decision=${ap.decision} reason=${ap.reason || '-'} pending=${approval.pendingCount()}`)
         if (ap.decision !== 'approve') {

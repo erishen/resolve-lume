@@ -42,19 +42,42 @@ const ALL_SCHEMA_NAMES = new Set(ALL_SCHEMAS.map((t) => t.name))
 // its own GATED_EXTRA list before prompting a human.
 const GATED_SCHEMA_NAMES = ALL_SCHEMAS.filter((t) => t.needsApproval === true).map((t) => t.name)
 // Tools whose side effects the schema predates: arbitrary profile writes,
-// shared browser state, local file moves, external drafts/publishes. They must
-// not run without a human clicking Approve (server.js consults this set).
-const GATED_EXTRA = new Set([
-  'write-file', 'browser-open', 'browser-screenshot', 'article-archive',
-  'article-publish', 'juejin-draft', 'juejin-publish', 'wechat-draft',
-  'sf-pw-publish', 'build-juejin',
+// shared browser state, local file moves, external drafts/publishes. Mirrors
+// resolve-studio's two-level policy:
+//   - `needsApproval: true` / no rule  -> every call needs a human
+//   - a predicate (studio's `approvalWhen`) -> only calls whose ARGS match are
+//     gated, so read-only variants (list queue, preview) stay friction-free.
+// article-publish is the concrete case: `confirm=true` really posts to
+// WordPress, while omitting it only lists the queue.
+const APPROVAL_RULES = new Map([
+  ['write-file', () => true],
+  ['browser-open', () => true],
+  ['browser-screenshot', () => true],
+  ['article-archive', () => true],
+  ['article-publish', (a) => !!a && a.confirm === true],
+  ['juejin-draft', () => true],
+  ['juejin-publish', () => true],
+  ['wechat-draft', () => true],
+  ['sf-pw-publish', () => true],
+  ['build-juejin', () => true],
 ])
-// pse-review keeps needsApproval in the schema (studio gated its paid tier);
-// here the paid tier has hasExplicitPaidIntent and the free tier is read-only,
-// so prompting for every weekly review would be pure noise.
+// Names that MAY be gated (union of schema flag + rules), used by the panel to
+// flag cards. Runtime decisions go through needsApproval(name, args).
 const APPROVAL_GATED_NAMES = new Set(
-  [...GATED_EXTRA, ...GATED_SCHEMA_NAMES].filter((n) => n !== 'pse-review'),
+  [...APPROVAL_RULES.keys(), ...GATED_SCHEMA_NAMES].filter((n) => n !== 'pse-review'),
 )
+
+/**
+ * Decide whether this concrete call needs a human. Schema flag wins (always
+ * gated); otherwise the tool's rule inspects the arguments (studio compat).
+ */
+function needsApproval(name, args) {
+  if (name === 'pse-review') return false
+  if (GATED_SCHEMA_NAMES.includes(name)) return true
+  const rule = APPROVAL_RULES.get(name)
+  return rule ? !!rule(args || {}) : false
+}
+
 
 // ---- path safety ----
 // Symlinks are resolved before the containment check: a link placed inside an
@@ -686,5 +709,5 @@ function capabilities() {
   ].join('\n')
 }
 
-module.exports = { BUILTIN_TOOLS, BUILTIN_NAMES, ALL_SCHEMA_NAMES, GATED_SCHEMA_NAMES, APPROVAL_GATED_NAMES, AGENT_TOOL_ALLOW,
+module.exports = { BUILTIN_TOOLS, BUILTIN_NAMES, ALL_SCHEMA_NAMES, GATED_SCHEMA_NAMES, APPROVAL_GATED_NAMES, needsApproval, AGENT_TOOL_ALLOW,
                    executeBuiltinTool, normalizeToolError, normalizeArgs, capabilities }
