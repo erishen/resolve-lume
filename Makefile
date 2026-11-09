@@ -7,6 +7,9 @@
 BUILDX_CONFIG ?= $(CURDIR)/.data/buildx
 export BUILDX_CONFIG
 
+# 五座 MCP 桥归 tsm-hub 管（2026-11-09 收归），这里的 mcp-bridges-* 只是转发。
+TSM_HUB_DIR ?= ../../golang/tsm-hub
+
 setup:
 	@bash scripts/vendor_repos.sh
 	@bash scripts/vendor_lume_bin.sh
@@ -54,6 +57,22 @@ logs:
 # 仅重建前端（改了 frontend/ 后更快）
 frontend-up:
 	docker compose up -d --build frontend
+
+# ================= MCP 桥（fs/fetch/git/memory/think） =================
+# 五座 Streamable HTTP 桥单独一份 compose（容器名固定 mcp-*，与 tsm-hub 共用网络），
+# 全都 restart: unless-stopped，宿主 Docker 重启后自动回来。改了 git 镜像用 --build。
+# 五座 MCP 桥（fs / memory / think / fetch / git）统一在 tsm-hub 的 docker-compose.yml 里。
+# 2026-11-09 起 lume 仓不再定义 MCP 容器，避免两仓 docker compose up 撞容器名：
+#   cd work/golang/tsm-hub && docker compose up -d mcp-fs mcp-memory mcp-think mcp-fetch mcp-git
+# 这里的 make 目标只做转发，防止有人照着旧文档去跑已经不存在的文件。
+mcp-bridges-up:
+	cd $(TSM_HUB_DIR) && docker compose up -d mcp-fs mcp-memory mcp-think mcp-fetch mcp-git
+
+mcp-bridges-down:
+	cd $(TSM_HUB_DIR) && docker compose stop mcp-fs mcp-memory mcp-think mcp-fetch mcp-git
+
+mcp-bridges-logs:
+	cd $(TSM_HUB_DIR) && docker compose logs -f --tail=50 mcp-fs mcp-memory mcp-think mcp-fetch mcp-git
 
 # ================= 宿主 sidecar 模式 =================
 # sidecar 是宿主 macOS 常驻进程（127.0.0.1:3000），只有 backend/frontend 在容器里。

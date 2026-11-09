@@ -324,21 +324,82 @@ function probeHttpMcp(url) {
   })
 }
 
-// Probe each HTTP MCP server and backfill its status/toolCount/tools. Retry while
-// the bridges are still warming up (they share the tsm-hub network with us).
+// Probe each HTTP MCP server and backfill its status/toolCount/tools.
+//
+// 2026-11-09：backend 现在通过 lume-tools/mcp_http_proxy.sh 以 stdio 接上了这 5 座
+// HTTP 桥（fs/fetch/git/memory/think），而 sidecar 跑在宿主 macOS 上：既解析不到
+// mcp-* 的容器名、也没有 :8000 的端口发布，本机永远探不通。所以「面板是否红」不能
+// 以本机探通为准，改成以**后端真实注册的工具**为真值（agent-httpd 把 MCP 工具注册成
+// `<serverId>__<tool>`）；本机探不通就回退到后端快照。
 let httpRefreshAttempts = 0
+
+function fetchBackendTools() {
+  return new Promise((resolve) => {
+    const u = new URL(AGENT_URL)
+    const req = http.request(
+      { method: 'GET', hostname: u.hostname, port: u.port || 80, path: '/react/api/tools', timeout: 5000 },
+      (resp) => {
+        let body = ''
+        resp.on('data', (c) => (body += c))
+        resp.on('end', () => {
+          try {
+            resolve(JSON.parse(body).tools || [])
+          } catch {
+            resolve([])
+          }
+        })
+      }
+    )
+    req.on('error', () => resolve([]))
+    req.on('timeout', () => {
+      req.destroy()
+      resolve([])
+    })
+    req.end()
+  })
+}
+
+// 把 `<serverId>__<tool>` 反解成 {serverId: [{name, description}]}。
+function groupToolsByServer(tools) {
+  const groups = {}
+  for (const t of tools) {
+    const name = t.name || ''
+    const i = name.indexOf('__')
+    if (i <= 0) continue
+    const id = name.slice(0, i)
+    ;(groups[id] = groups[id] || []).push({
+      name: name.slice(i + 2),
+      description: t.description || t.desc || '',
+    })
+  }
+  return groups
+}
+
 function refreshHttpMcpServers() {
   const m0 = mcpState()
   const targets = (m0.servers || []).filter((s) => s.transport === 'http' && s.url)
   if (targets.length === 0) return
-  const results = {}
-  let pending = targets.length
-  let anyOk = false
-  const finish = () => {
-    if (--pending > 0) return
-    // Re-read the store fresh so we never clobber the stdio backfill (which may
-    // have saved in the meantime) and only patch the HTTP servers we own.
+  Promise.all([
+    fetchBackendTools(),
+    ...targets.map((s) =>
+      probeHttpMcp(s.url)
+        .then((r) => ({ id: s.id, r }))
+        .catch((e) => ({ id: s.id, r: { ok: false, error: e.message } }))
+    ),
+  ]).then(([backendTools, ...probes]) => {
+    const groups = groupToolsByServer(backendTools)
+    const results = {}
+    for (const p of probes) results[p.id] = p.r
+    // 本机探不通、但后端已经注册了该 server 的工具 → 判定为 connected。
+    for (const s of targets) {
+      if (results[s.id] && results[s.id].ok) continue
+      const g = groups[s.id]
+      if (g && g.length) results[s.id] = { ok: true, tools: g, via: 'backend' }
+    }
+    // Re-read the store fresh so we never clobber the stdio backfill.
     const m = mcpState()
+    let okCount = 0
+    let anyViaBackend = false
     for (const s of m.servers) {
       const r = results[s.id]
       if (!r) continue
@@ -346,27 +407,24 @@ function refreshHttpMcpServers() {
       s.toolCount = r.ok ? r.tools.length : 0
       s.tools = r.ok ? r.tools.map((t) => t.name) : []
       s.toolDetails = r.ok ? Object.fromEntries(r.tools.map((t) => [t.name, t.description || ''])) : {}
-      if (r.ok) anyOk = true
+      if (r.ok) {
+        okCount++
+        if (r.via === 'backend') anyViaBackend = true
+      }
     }
     saveMcp(m)
-    if (anyOk) {
-      console.log(`[sidecar] refreshed ${targets.length} HTTP MCP server(s)`)
+    if (okCount === targets.length) {
+      console.log(
+        `[sidecar] refreshed ${okCount}/${targets.length} HTTP MCP server(s)` +
+          (anyViaBackend ? ' (verified via backend tool snapshot)' : '')
+      )
     } else if (httpRefreshAttempts++ < 20) {
       setTimeout(refreshHttpMcpServers, 3000)
     } else {
-      console.log(`[sidecar] HTTP MCP servers unreachable after retries`)
+      const bad = targets.filter((s) => !(results[s.id] && results[s.id].ok)).map((s) => s.id)
+      console.log(`[sidecar] MCP servers unreachable after retries: ${bad.join(', ')}`)
     }
-  }
-  for (const s of targets) {
-    probeHttpMcp(s.url)
-      .then((r) => {
-        results[s.id] = r
-      })
-      .catch((e) => {
-        results[s.id] = { ok: false, error: e.message }
-      })
-      .finally(finish)
-  }
+  })
 }
 
 // ---------- tools: merge backend built-ins + MCP-bridge tools ----------
@@ -405,12 +463,18 @@ function handleToolsList(res) {
         }
         const reg = mcpState()
         const merged = [...base]
+        // 2026-11-09：backend 现在自己就把 5 座 HTTP 桥（fs/fetch/git/memory/think）
+        // 以 `<id>__<tool>` 注册进来了，面板的 MCP 条目如果照旧无脑追加 `id:tool`，
+        // 同一批工具会被列两遍（46 → 152 的假象）。按名字去重，后端那份优先。
+        const seen = new Set(base.map((t) => t.name || ''))
         for (const s of reg.servers || []) {
           // Only the HTTP bridges are "MCP tools" here — the stdio lume-tools
           // bridge is already surfaced by the backend as built-ins.
           if (s.transport !== 'http' || !s.tools || !s.tools.length) continue
           const details = s.toolDetails || {}
           for (const tool of s.tools) {
+            const backendName = `${s.id}__${tool}`
+            if (seen.has(backendName)) continue
             merged.push({
               name: `${s.id}:${tool}`,
               description: details[tool] || `${s.id} MCP tool`,
@@ -421,6 +485,7 @@ function handleToolsList(res) {
           }
         }
         for (const t of builtin.BUILTIN_TOOLS) {
+          if (seen.has(t.name)) continue
           merged.push({
             name: t.name,
             description: t.description || '',

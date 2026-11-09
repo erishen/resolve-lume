@@ -55,9 +55,10 @@ services:
       # 源码态热改 souls / tools / mcp 配置无需重建镜像
       - ./souls:/app/souls:ro
       - ./lume-tools:/app/lume-tools:ro
-      # backend 只读 lume-tools 配置：agent-httpd(C 移植版) 的 MCP 客户端
-      # 目前无法完成 node/npx server 的握手，npx server 会拖死启动；
-      # 完整 6 个配置仅供前端面板显示(由 sidecar 读取 deploy/mcp-servers.json)。
+      # agent-httpd 的 MCP 客户端只支持 stdio（src/agent/mcp.c:125），且镜像
+      # 不含 node/npx，所以 npx 型 server（fs/fetch/git/memory/think）统一经
+      # lume-tools/mcp_http_proxy.sh 翻译：stdio 侧一行一个 JSON-RPC，脚本用
+      # 容器自带 curl 打到 tsm-hub 的 Streamable HTTP 桥（mcp-*:8000）。
       - ./deploy/mcp-servers.backend.json:/app/.data/mcp-servers.json:ro
       # router 自动同步会向 .data/mcp-servers-router.json 注入 memory/think
       # 两个 npx server，同样会让 backend 卡死；用空 stub ro 覆盖之。
@@ -79,6 +80,11 @@ services:
     cap_drop:
       - ALL
     restart: unless-stopped
+    networks:
+      - default
+      # tsm-hub 的 mcp-* Streamable HTTP 桥（fs/fetch/git/memory/think）跑在这个
+      # 外部网络里，backend 必须入同一网络才能解析 mcp-fs / mcp-fetch 等主机名。
+      - tsm-hub_default
 
   # sidecar 不再是 compose 服务：它现在是宿主 macOS 上的常驻进程，监听 127.0.0.1:3000，
   # 由 `make sidecar-host-start` 经 sidecar/launcher.js 拉起（工具直接读写宿主真实路径，
@@ -121,3 +127,8 @@ services:
     cap_drop:
       - ALL
     restart: unless-stopped
+
+networks:
+  # 外部网络：由 work/golang/tsm-hub 的 compose 创建，提供 mcp-* HTTP MCP 桥。
+  tsm-hub_default:
+    external: true

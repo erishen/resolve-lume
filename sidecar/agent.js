@@ -195,6 +195,37 @@ async function proxySSE(req, res, method, incomingPath, bodyBuffer) {
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   })
+  // MCP 工具（fs/fetch/git/memory/think）在 agent-httpd 里是同步执行的，直接回
+  // 普通 JSON（{ok,result,tool}），不是 SSE 帧。缺这个分支时 /api/tool/run 会
+  // 打开一条事件流却一条不下发，面板上表现为「工具跑完了但结果空白」。
+  const ctype = String(resp.headers['content-type'] || '')
+  if (ctype.includes('application/json')) {
+    const chunks = []
+    resp.on('data', (c) => chunks.push(c))
+    resp.on('end', () => {
+      const frame = (ev, obj) => `event: ${ev}\ndata: ${JSON.stringify(obj)}\n\n`
+      let payload = null
+      try {
+        payload = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      } catch {
+        /* fall through to the error frame */
+      }
+      if (!payload) {
+        res.end(frame('error', { message: '工具返回了无法解析的响应' }))
+        return
+      }
+      if (payload.ok === false || payload.error) {
+        res.end(frame('error', { message: String(payload.error || '工具执行失败') }))
+        return
+      }
+      const text =
+        typeof payload.result === 'string' ? payload.result : JSON.stringify(payload.result ?? '', null, 2)
+      res.write(frame('delta', { text }))
+      res.end(frame('done', { answer: text }))
+    })
+    resp.on('error', () => res.end())
+    return
+  }
   // Long-running tools (article-write etc.) execute in a SEPARATE blocking
   // /api/tools/call request while C emits nothing. Register this live chat
   // response so progress.js can inject `reasoning` frames into it. Only

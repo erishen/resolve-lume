@@ -5,5 +5,35 @@
     "command": "lume-core",
     "args": "--mcp /app/lume-tools/tools.lume",
     "approval": false
+  },
+  {
+    "id": "fs",
+    "transport": "http",
+    "url": "http://mcp-fs:8000/mcp",
+    "approval": false
+  },
+  {
+    "id": "fetch",
+    "transport": "http",
+    "url": "http://mcp-fetch:8000/mcp",
+    "approval": false
+  },
+  {
+    "id": "git",
+    "transport": "http",
+    "url": "http://mcp-git:8000/mcp",
+    "approval": true
+  },
+  {
+    "id": "memory",
+    "transport": "http",
+    "url": "http://mcp-memory:8000/mcp",
+    "approval": false
+  },
+  {
+    "id": "think",
+    "transport": "http",
+    "url": "http://mcp-think:8000/mcp",
+    "approval": false
   }
 ]

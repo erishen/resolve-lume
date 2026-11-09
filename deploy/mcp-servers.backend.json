@@ -12,5 +12,40 @@
     "command": "lume-core",
     "args": "--mcp /app/lume-tools/sidecar_ro.lume",
     "approval": false
+  },
+  {
+    "id": "fs",
+    "transport": "stdio",
+    "command": "/bin/sh",
+    "args": "/app/lume-tools/mcp_http_proxy.sh http://mcp-fs:8000/mcp",
+    "approval": false
+  },
+  {
+    "id": "fetch",
+    "transport": "stdio",
+    "command": "/bin/sh",
+    "args": "/app/lume-tools/mcp_http_proxy.sh http://mcp-fetch:8000/mcp",
+    "approval": false
+  },
+  {
+    "id": "git",
+    "transport": "stdio",
+    "command": "/bin/sh",
+    "args": "/app/lume-tools/mcp_http_proxy.sh http://mcp-git:8000/mcp",
+    "approval": false
+  },
+  {
+    "id": "memory",
+    "transport": "stdio",
+    "command": "/bin/sh",
+    "args": "/app/lume-tools/mcp_http_proxy.sh http://mcp-memory:8000/mcp",
+    "approval": false
+  },
+  {
+    "id": "think",
+    "transport": "stdio",
+    "command": "/bin/sh",
+    "args": "/app/lume-tools/mcp_http_proxy.sh http://mcp-think:8000/mcp",
+    "approval": false
   }
 ]
