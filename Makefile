@@ -14,7 +14,11 @@ setup:
 	@bash scripts/vendor_repos.sh
 	@bash scripts/vendor_lume_bin.sh
 
+# vendored 源码不入库，每次 build 前把必要的本地补丁打回去（幂等）。
+# 补丁来源见 scripts/patch_vendored_sources.sh：目前只有 lume-core 的
+# HTTP_MAX_TIMEOUT_MS 600s→1200s（否则 pse-review 类长任务会在桥侧 502）。
 build: setup
+	@bash scripts/patch_vendored_sources.sh
 	docker compose build
 
 # 起两个容器（backend + frontend）。sidecar 是宿主常驻进程，不在此命令内——
@@ -227,6 +231,7 @@ endif
 # 已在场就用, 缺失才拉。vendor/lume/bin/、agent-httpd/、lume-core/ 均不入库(见 .gitignore)。
 vendor:
 	@bash scripts/vendor_repos.sh
+	@bash scripts/patch_vendored_sources.sh
 	@bash scripts/vendor_lume_bin.sh
 
 # 强制刷新(上游发了新版、或想钉到另一个 pinned release 时用):
@@ -234,6 +239,7 @@ vendor:
 #   make bootstrap LUME_VERSION=v0.12.2 AH_VER=v0.12.2  # 钉到指定 release
 bootstrap:
 	@FORCE=1 bash scripts/vendor_repos.sh
+	@bash scripts/patch_vendored_sources.sh
 	@FORCE=1 bash scripts/vendor_lume_bin.sh
 
 peer-check: vendor

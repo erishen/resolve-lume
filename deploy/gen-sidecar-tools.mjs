@@ -47,6 +47,12 @@ const OUT_DEFAULT = path.join(ROOT, 'lume-tools', 'sidecar_ro.lume')
 // post-comment skill）。安全性由 server.js /api/tools/call 的门禁兜底：
 // 无 confirm = 清单/预览（只读）；confirm=true 真发布，必须命中
 // hasExplicitPublishIntent（用户当前消息明确说 发布/上线/publish）。
+//
+// 例外（2026-11-09）：投资/分析线六个工具挂上。此前 portfolio-check / pse-review
+// 都「已实现但 Agent 看不到」，用户要「深度投资组合分析」时模型只能回「工具未开放」，
+// 只能由人手动在面板里跑。它们都是「读本地数据 + 调模型出报告」，不写公开内容、
+// 不对外发布；pse-review 的付费档(deepseek)另由 server.js 的显式意图闸门兜底，
+// 默认走免费 router/free 档。
 const DEFAULT_ALLOW = [
   'echo', 'calculator', 'read-file', 'analyze-dir', 'analyze-code-dir',
   'doc-library-search', 'photo-duplicates', 'video-library-list', 'privacy-audit',
@@ -55,6 +61,8 @@ const DEFAULT_ALLOW = [
   'article-publish',
   'skill-run', 'pick-post', 'resume-tailor', 'interview-questions', 'system-info',
   'capabilities',
+  'portfolio-check', 'pse-review', 'pse-review-latest',
+  'csv-analyze', 'product-analyze', 'crm-task',
 ]
 
 const args = process.argv.slice(2)
@@ -158,6 +166,20 @@ const DESC_OVERRIDE = {
     'Generate 9 technical interview questions (1-5 min). req: mode. Call DIRECTLY, never read files first.',
   'system-info':
     'Runtime diagnostics: memory/CPU/uptime/platform. Optional section filter.',
+  // 2026-11-09 投资/分析线新挂的工具：约束放最前，避免被 148B 截断后模型看不到
+  // 「先体检」「只会跑一次」「付费档要用户同意」这类关键约束。
+  'portfolio-check':
+    'Refresh portfolio snapshot FIRST (1-3 min, read-only). On anomalies: report verbatim, do NOT continue to pse-review, never invent numbers.',
+  'pse-review':
+    'Full PSE review (Planner/Specialist/Evaluator, 2-6 min). Call ONCE. Default FREE; provider=deepseek is PAID, needs explicit user OK.',
+  'pse-review-latest':
+    'Read the LAST saved PSE review (Markdown + path). Use for follow-up numbers when report text is gone; never invent figures.',
+  'csv-analyze':
+    'Analyze ONE CSV into an HTML report (profile/trends/anomalies). req: file. Read-only; always report the output path.',
+  'product-analyze':
+    'Product/competitor analysis via 3-agent pipeline (report under sandbox/). req: product. Call DIRECTLY, never read files first.',
+  'crm-task':
+    'One personal-CRM pipeline: task in [crm-qa|follow-up-draft|weekly-review]. Needs CRM DB/API. Default FREE; deepseek PAID needs explicit OK.',
 }
 
 function buildDesc(t) {
@@ -272,8 +294,10 @@ lines.push('  // allow_private: sidecar 绑宿主回环 127.0.0.1（server.js HO
 lines.push('  //                容器侧经 SIDECAR_TOOLS_URL(host.docker.internal) 到达——该主机名')
 lines.push('  //                解析为私有网段地址，lume 的 SSRF 闸门默认拒私有地址')
 lines.push('  //                （builtins_http.c:25-26,901）——不加这一句调用必失败。')
-lines.push('  // timeout 600 是 lume 的封顶；sidecar 侧 spawnCapture 自己是 300s，够用。')
-lines.push('  let r = http_post(base, {"headers": hdr, "body": body, "timeout": 600, "max_bytes": 2097152, "allow_private": true});')
+lines.push('  // 870s：pse-review / article-write 这类多智能体任务实测 7-12 min，原来的 600s')
+lines.push('  // 会让报告已经写盘、桥却先 abort（2026-11-09 实录 sidecar__pse-review 502）。')
+lines.push('  // 870 < agent-httpd MCP_CALL_TIMEOUT(900s)，让桥先失败并回可读错误。')
+lines.push('  let r = http_post(base, {"headers": hdr, "body": body, "timeout": 870, "max_bytes": 2097152, "allow_private": true});')
 lines.push('  if (r["ok"] != true) { return "error: sidecar call failed: " + str(r["err"]) + " status=" + str(r["status"]); }')
 lines.push('  // json() 解析失败会中止脚本；包 try() 才能把「上游返回非 JSON」变成可读的')
 lines.push('  // 工具错误。try 的成功值在 ok 键、失败信息在 err 键（builtins.c native_try）。')

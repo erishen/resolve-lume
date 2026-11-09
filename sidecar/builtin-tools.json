@@ -238,7 +238,7 @@
     },
     {
       "name": "portfolio-check",
-      "description": "投资前数据体检：在 analysis-lens 项目里依次执行 make calculate / make analyze / make compare，刷新本地持仓快照并扫描异常（如年化收益率为天文数字、整体收益异常、产品级离群值等），返回体检结论。用于生成投资复盘前的前置检查，确认数据无误后再做正式分析。只读本地数据，不修改持仓。",
+      "description": "投资前数据体检：在 asset-lens 项目里依次执行 make calculate / make analyze / make compare，刷新本地持仓快照并扫描异常（如年化收益率为天文数字、整体收益异常、产品级离群值等），返回体检结论。用于生成投资复盘前的前置检查，确认数据无误后再做正式分析。只读本地数据，不修改持仓。",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -394,7 +394,7 @@
     },
     {
       "name": "pse-review",
-      "description": "Run the full PSE portfolio review (autogen-pse pipeline): regenerates the portfolio summary and runs a Planner/Specialist/Evaluator agent team with personal knowledge-base retrieval to produce an in-depth weekly review. Takes 2-6 minutes and calls the configured LLM. Returns the complete review report (Markdown). Use for a serious, quality-gated weekly review. [model provider: deepseek (PAID)]. This deployment uses the PAID deepseek provider, so every run requires human approval.",
+      "description": "Run the full PSE portfolio review (autogen-pse pipeline): regenerates the portfolio snapshot and runs a Planner/Specialist/Evaluator agent team to produce an in-depth weekly review (Markdown, with absolute path). Takes 2-6 minutes and calls the LLM. Default provider is free (llm-router, no cost); provider=\"deepseek\" is PAID (about CNY 0.1-1 per run) and requires explicit user consent. Use for a serious weekly portfolio review.",
       "parameters": {
         "type": "object",
         "properties": {},

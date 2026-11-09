@@ -31,7 +31,7 @@ const builtin = require('./builtin-exec')
 const H = require('./business-helpers')
 const progress = require('./progress')
 const toolGuard = require('./toolGuard')
-const { buildAgentChatBody, hasExplicitPublishIntent } = require('./chatBody')
+const { buildAgentChatBody, hasExplicitPublishIntent, hasExplicitPaidIntent } = require('./chatBody')
 const { isSensitivePath, tokenMatches, MAX_PREVIEW_BYTES } = require('./security')
 
 // Guard against a stray PORT=0 / non-numeric value in the environment: Node
@@ -931,6 +931,20 @@ async function handle(req, res) {
             '用户当前消息并未明确说「发布 / 上线 / publish」，已拒绝执行。' +
             '先用不带 confirm 的调用做预览并向用户转达，等用户明确同意发布后，' +
             '再带 confirm=true 只针对那一篇 project 调用。',
+        })
+      }
+      // pse-review on the bridge (2026-11-09): the default tier is free
+      // (provider=free / llm-router). provider="deepseek" costs money, so the
+      // model must not select it on its own — only an explicit user ask in the
+      // current message authorizes it. Reference: same class of gate as publish.
+      if (toolName === 'pse-review' && toolArgs && toolArgs.provider === 'deepseek' &&
+          !hasExplicitPaidIntent(publishIntentMsg)) {
+        return send(res, 200, {
+          name: toolName,
+          result:
+            'tool error: provider="deepseek" 是付费档，用户当前消息没有明确要求付费模型，已拒绝。' +
+            '请省略 provider 参数（默认免费档 router/free）重新调用；' +
+            '如确实需要付费档，先向用户说明费用（约 ¥0.1–1/次）并等其明确同意。',
         })
       }
       // Refuse byte-identical repeats of a call that just failed. C's own

@@ -28,6 +28,15 @@ function hasExplicitPublishIntent(message) {
   return /(发布|上线|publish|发到线上|推送到|post\s+to)/i.test(s)
 }
 
+// Explicit user consent for a PAID model run. pse-review defaults to the free
+// router/free tier; provider="deepseek" costs money, so the bridge must not pick
+// it on its own. Same negation-handling as publish: "别用付费模型" is not consent.
+function hasExplicitPaidIntent(message) {
+  let s = String(message == null ? '' : message)
+  s = s.replace(/(不|别|勿|暂|无需|不用|禁止|避免|先不|不要)\s*(要|用|花|走|切)?\s*(钱|付费|收费|deepseek|paid)[^，。！!?；;\n]*/gi, '')
+  return /(付费|收费|花钱|扣费|付费模型|deepseek|paid\s+model)/i.test(s)
+}
+
 /**
  * resolve-studio sends { messages, model, ... }; agent-httpd expects
  * { message, history }. The selected task's soul becomes the task-level system
@@ -60,4 +69,4 @@ function buildAgentChatBody(body, task) {
   return agentBody
 }
 
-module.exports = { buildAgentChatBody, TOOL_DISCIPLINE, hasExplicitPublishIntent }
+module.exports = { buildAgentChatBody, TOOL_DISCIPLINE, hasExplicitPublishIntent, hasExplicitPaidIntent }

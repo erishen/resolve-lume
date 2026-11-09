@@ -5,7 +5,7 @@
 // MUST be injected even when getTask() returns undefined.
 // Run with `make check`. Zero external dependencies.
 const assert = require('node:assert/strict')
-const { buildAgentChatBody, TOOL_DISCIPLINE, hasExplicitPublishIntent } = require('./chatBody')
+const { buildAgentChatBody, TOOL_DISCIPLINE, hasExplicitPublishIntent, hasExplicitPaidIntent } = require('./chatBody')
 
 const cases = []
 function test(name, fn) {
@@ -80,6 +80,17 @@ test('publish intent needs explicit, non-negated user wording', () => {
   assert.equal(hasExplicitPublishIntent('不要发布，先给我看看'), false)
   assert.equal(hasExplicitPublishIntent('先别上线'), false)
   assert.equal(hasExplicitPublishIntent('暂不发布'), false)
+})
+
+test('paid-model intent needs explicit, non-negated user wording', () => {
+  assert.equal(hasExplicitPaidIntent(''), false)
+  assert.equal(hasExplicitPaidIntent(null), false)
+  assert.equal(hasExplicitPaidIntent('帮我做一份深度投资组合分析'), false)
+  assert.equal(hasExplicitPaidIntent('用免费的就行'), false)
+  assert.equal(hasExplicitPaidIntent('别用付费模型'), false)
+  assert.equal(hasExplicitPaidIntent('不要花这个钱'), false)
+  assert.equal(hasExplicitPaidIntent('用 deepseek 吧，付费也行'), true)
+  assert.equal(hasExplicitPaidIntent('可以付费，质量优先'), true)
 })
 
 let failed = 0

@@ -120,6 +120,14 @@ flowchart LR
 >
 > 工具 schema 体积（同轮二次优化）：`agent-httpd/src/agent/mcp_props_compact.h` 对每个参数（属性级）`description` 做裁剪——超过 64 字符的整条丢弃（连同相邻逗号，保证仍是合法 JSON），短提示保留；实现上先 `jskip_value` 求出 properties 对象自身边界，避免把后续 `required`/下一工具抄进来。实测注入体积 `props` 31,658B → 22,002B（-30.5%，git 单服务 25,086 → 15,650），工具条数不变（99）。backend 启动日志会打 `[mcp] <server>: schema tools=… props=… (raw …)` 与 `schema totals`，便于回归对比。
 
+> 业务工具桥（sidecar → agent，2026-11-09）：模型能看到哪些内置工具由 `deploy/gen-sidecar-tools.mjs` 的 `DEFAULT_ALLOW` 决定，`sidecar/server.js` 的 `/api/tools/call` 再用 `AGENT_TOOL_ALLOW`（直接解析生成后的桥文件，不会漂移）做服务端强制——两处必须同时改，只改生成器会出现「模型列得出、调用 403」。本轮把投资/分析线六个工具挂上：`portfolio-check` / `pse-review` / `pse-review-latest` / `csv-analyze` / `product-analyze` / `crm-task`，桥面 25 → 31 个工具（backend 注册 81 → 87，UI `/api/tools` 99 → 105 项口径随 sidecar 全量清单变化）。此前 `weekly-investment` 技能在对话里只能回答「工具未开放」，根因就是这两个名单都没放行。
+>
+> 付费闸门：`pse-review` 默认 `provider=free`（llm-router 免费池，无费用）；`provider=deepseek` 是付费档（约 ¥0.1–1/次），`server.js` 用 `hasExplicitPaidIntent` 兜底——用户当前消息没有明确要求付费（且不是「别用付费/不要花钱」这类否定）时，桥直接回 tool error 要求省略 provider，模型不能自己选付费档。与 article-write/article-publish 的 `hasExplicitPublishIntent` 同型，两个 helper 都在 `sidecar/chatBody.js` 并有单测。
+>
+> 长任务超时（同轮）：sidecar 桥的出站调用是 `.lume` 的 `http_post`，而 lume-core 对 `timeout` 有硬封顶（`builtins_http.c` 的 `HTTP_MAX_TIMEOUT_MS`，原 600s）。`pse-review` 实测 7–12 min，桥会在 600s 先 abort 并回 502，而报告其实已经写盘——agent 于是误报「失败」。现在桥超时设 **870s**（小于 agent-httpd 的 `MCP_CALL_TIMEOUT` 900s，让桥先失败并给出可读错误，而不是 C 侧静默杀调用），并把 lume-core 封顶放宽到 **1200s**。`lume-core/` 与 `agent-httpd/` 一样是 vendored 目录（不入库、`make vendor` 会覆盖），所以该改动由 `scripts/patch_vendored_sources.sh` 幂等打回，并挂进 `make build` / `vendor` / `bootstrap`。
+>
+> 端到端验证（2026-11-09，均经 backend `/react/api/tools/call`）：`sidecar__portfolio-check` 200（快照刷到 14:17）、`sidecar__pse-review` 200（257s，返回报告正文 + 绝对路径）、`sidecar__pse-review-latest` 200（取回最近周报）、`sidecar__csv-analyze` 200（83s，样例 CSV 出 HTML 报告）；带 `provider=deepseek` 且无付费意图的调用被闸门拒绝。
+
 ### 3.5 peer / A2A 面 —— tsm-hub 作为只读能力节点
 
 tsm-hub 侧新增了 A2A 面（`/.well-known/agent-card.json`、`/a2a`，以及需要签名的 `/peer/health`、`/peer/invoke`、`/peer/relay`），把「工具/技能/MCP/用量/provider 健康」以只读 capability 暴露给 lume 侧 agent。两侧端点：lume peer `127.0.0.1:18114`（节点名 `resolve-lume`）、tsm-hub `127.0.0.1:19070`（节点名 `tsm-hub`）。
