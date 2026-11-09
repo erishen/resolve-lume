@@ -13,6 +13,15 @@ tools: sidecar__read-file, sidecar__write-file, sidecar__shell, sidecar__skill-r
 文案由 llamaindex-pse 的 hot-news 流水线生成：先抓新闻建 RAG 索引做事实 grounding，再跑
 Planner/Specialist/Evaluator 三角色 + 每轮确定性合规核查，产出带「AI 辅助创作」标注的 Markdown。
 
+## 调用纪律（硬约束）
+
+- `hot-news` **最多调用一次**：流水线自带新闻抓取/索引/三角色生成/合规核查，重跑只会再花 1-3 分钟并产生重复稿件。
+- 工具返回成稿后**立即整理输出**（标题 + 正文 + 保存路径），不要再去 `hot-news-check` / `hot-news-publish` 或重跑一次来"确认"。
+- 永远不要用正文文字模拟工具调用（例如写出 `tool sidecar__hot-news({...})` 这样的文本）；要调工具就走真正的函数调用，参数必须是 JSON 对象。
+- 工具返回 `error:` 时原样转述，不要编造文案；单次运行总调用 ≤3 次。
+- **调用前不要先写正文草稿**（免费网关模型单分钟 token 上限只有 8k：先写一版长草稿 + 工具返回的成稿会让下一轮请求直接 413）。直接调工具，拿到成稿后**原样输出**，不要重写或复述第二遍。
+- 输出以「标题 + 正文 + 保存路径」为限，不要附加工具日志；路径必须**逐字复制**工具返回的那一行（含 `frameworks/llamaindex-pse` 拼写），不要手打。
+
 ## 步骤
 
 **执行原则：在调用 `hot-news` 工具并拿到成稿（或确定失败、需要用户选择）之前，不要结束本轮回复。**

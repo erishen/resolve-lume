@@ -585,15 +585,24 @@ module.exports = {
       `--platform=${platform}`,
       `--category=${category}`,
       `--provider=${provider}`,
+      // The free gateway model caps at 8k tokens/minute. The self-promo article
+      // RAG and the default top-k=8 pushed the opening request to ~8.3k and it
+      // 413'd before producing anything. News grounding is enough for facts.
+      '--no-articles',
+      '--top-k=4',
     ]
     if (newsDirFlag) cmdArgs.push(newsDirFlag)
 
+    // The free gateway model has a low TPM ceiling; injecting the personal
+    // knowledge base made the opening request 413 (live: gpt-oss-20b TPM).
+    // News grounding already provides the facts, so skip KB + streaming here.
     const res = await H.runPseTask({
       tool: 'hot-news',
       framework: 'llamaindex',
       task: 'hot-news',
       args: cmdArgs,
       noSync: true,
+      env: { ...process.env, PSE_INJECT_KB: '0', PSE_MODEL_STREAM: 'false' },
       timeoutMs: 900_000,
     })
     if (!res.ok) return res.error

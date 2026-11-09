@@ -633,6 +633,37 @@ function noteSessionTask(sessionId, taskId) {
   if (sessionTasks.size > 500) sessionTasks.delete(sessionTasks.keys().next().value)
 }
 
+// Expensive pipeline calls (PSE / hot-news / article) cost minutes and money.
+// A small model that emitted a tool call as prose gets the result back as plain
+// text and often calls the SAME tool with the same args again to "confirm"
+// (observed live: hot-news ran twice, 2 x 3 min). Replay the first result instead.
+const EXPENSIVE_TOOLS = new Set(['pse-review', 'hot-news', 'portfolio-check', 'article-write', 'stock-scan'])
+const recentCalls = new Map()
+const RECENT_CALL_TTL_MS = 20 * 60 * 1000
+function callKey(name, args) {
+  try {
+    return name + ' ' + JSON.stringify(args || {})
+  } catch {
+    return name
+  }
+}
+function replayExpensiveCall(sessionId, name, args) {
+  if (!sessionId || !EXPENSIVE_TOOLS.has(name)) return null
+  const hit = recentCalls.get(sessionId + '::' + callKey(name, args))
+  if (!hit) return null
+  if (Date.now() - hit.at > RECENT_CALL_TTL_MS) {
+    recentCalls.delete(sessionId + '::' + callKey(name, args))
+    return null
+  }
+  return hit.result
+}
+function rememberExpensiveCall(sessionId, name, args, result) {
+  if (!sessionId || !EXPENSIVE_TOOLS.has(name)) return
+  if (typeof result !== 'string' || /^error/i.test(result)) return
+  recentCalls.set(sessionId + '::' + callKey(name, args), { at: Date.now(), result })
+  if (recentCalls.size > 300) recentCalls.delete(recentCalls.keys().next().value)
+}
+
 // Resolve a task by id (or undefined when absent/empty).
 function getTask(id) {
   if (!id) return undefined
@@ -1115,6 +1146,17 @@ async function handle(req, res) {
       const pub = progress.createProgressPublisher(
         (text) => progress.broadcastToSession(callSession, text), toolName,
       )
+      const replayed = replayExpensiveCall(callSession, toolName, toolArgs)
+      if (replayed) {
+        pub.finish()
+        console.log(`[sidecar] replayed ${toolName} result for ${callSession} (same args, no re-run)`)
+        return send(res, 200, {
+          name: toolName,
+          result:
+            '（同一会话内这条命令刚刚已经执行过，下面是那次的结果，直接使用它，不要再调用一次）\n\n' +
+            replayed.slice(0, 6000),
+        })
+      }
       let text = ''
       let failed = null
       try {
@@ -1128,7 +1170,19 @@ async function handle(req, res) {
         toolGuard.record(toolName, toolArgs, outcome)
         return send(res, 200, { name: toolName, ...outcome })
       }
-      const outcome = { result: String(text) }
+      // Free gateway models cap at 8k tokens/minute. A chatty pipeline result
+      // (logged steps + full article) can push the NEXT round over that limit and
+      // the run dies with HTTP 413 right after the work succeeded. Keep the head
+      // of the payload; the full file path stays in it.
+      const MAX_TOOL_RESULT_CHARS = 6000
+      let outText = String(text)
+      if (outText.length > MAX_TOOL_RESULT_CHARS) {
+        outText =
+          outText.slice(0, MAX_TOOL_RESULT_CHARS) +
+          `\n…（结果过长已截断，共 ${outText.length} 字符；完整内容见上文给出的文件路径，不要为此再调用一次工具）`
+      }
+      const outcome = { result: outText }
+      rememberExpensiveCall(callSession, toolName, toolArgs, String(text))
       toolGuard.record(toolName, toolArgs, outcome)
       return send(res, 200, { name: toolName, ...outcome })
     }
