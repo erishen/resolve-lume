@@ -177,7 +177,7 @@ function testSchemaRepair() {
     "attempted to call tool 'side-items' which was not in request.tools",
   ].map((m) => TOOLCALL_REJECTED.test(m))
   checks.push(['detects both observed gateway rejections', detected.every(Boolean)])
-  checks.push(['note tells the model not to invent tools', SCHEMA_REPAIR_NOTE('x').includes('不要臆造工具名')])
+  checks.push(['note tells the model not to invent tools', SCHEMA_REPAIR_NOTE('x').includes('不要臆造')])
 
   let failed = 0
   for (const [name, ok] of checks) {

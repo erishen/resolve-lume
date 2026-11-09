@@ -13,7 +13,7 @@ const fsp = require('fs/promises')
 const path = require('path')
 const os = require('os')
 const http = require('http')
-const { spawn } = require('child_process')
+const { spawn, spawnSync } = require('child_process')
 // Business tools ported from resolve-studio (PSE pipelines, article publishing,
 // HTTP-service readers). Zero-dep; see business-helpers.js for shared runners.
 const { BUSINESS } = require('./builtin-business')
@@ -311,8 +311,17 @@ async function privacyAudit(target, excludePath) {
   })
   if (missingIgnore.length) findings.push(`[gitignore] 未忽略常见敏感文件: ${missingIgnore.join(', ')}`)
   // 2. tracked sensitive files present
+  // 敏感文件是否存在要结合 git 状态判断：.env 被 .gitignore 忽略（未跟踪）本身是正常做法，
+  // 只说"存在 .env"会让模型写出"必须从 git 历史移除"这种错建议。
+  const gitStatus = (name) => {
+    const tracked = spawnSync('git', ['-C', root, 'ls-files', '--error-unmatch', name], { stdio: 'ignore' }).status === 0
+    const ignored = spawnSync('git', ['-C', root, 'check-ignore', '-q', name], { stdio: 'ignore' }).status === 0
+    if (tracked) return `已被 git 跟踪（必须处理）`
+    if (ignored) return `已被 .gitignore 忽略（未跟踪，正常）`
+    return `未被跟踪但也没被忽略（建议加进 .gitignore）`
+  }
   for (const n of ['.env', 'secrets.json', 'credentials.json', '.npmrc', '.netrc']) {
-    if (fs.existsSync(path.join(root, n))) findings.push(`[文件] 存在敏感文件 ${n}（确认是否应被 gitignore）`)
+    if (fs.existsSync(path.join(root, n))) findings.push(`[文件] 存在敏感文件 ${n}：${gitStatus(n)}`)
   }
   // 3. env.example placeholder hygiene
   const eg = path.join(root, '.env.example')
@@ -323,8 +332,8 @@ async function privacyAudit(target, excludePath) {
   } catch { /* no env.example */ }
   // 4-5. scan text files for hardcoded secrets
   let scanned = 0
-  let hitSecret = 0
-  let hitEntropy = 0
+  const secretHits = []
+  const entropyHits = []
   async function scan(abs) {
     if (scanned > 4000) return
     let entries
@@ -340,14 +349,24 @@ async function privacyAudit(target, excludePath) {
         scanned++
         let txt = ''
         try { txt = await fsp.readFile(full, 'utf8') } catch { continue }
-        if (secretRe.test(txt)) hitSecret++
-        if (highEntropyRe.test(txt)) hitEntropy++
+        // 记下命中的相对路径（最多 10 条）：只给"7 个文件命中"这种计数，模型会为了
+        // 找出是哪 7 个反复 search/read，8 轮预算就这么烧完了。
+        const rel = path.relative(root, full)
+        // 测试/示例/备份路径里的"密钥"几乎都是假值，直接标注，省掉模型逐个打开核实。
+        const likelyFake = /(^|\/)(\.backup|test|tests|__tests__|spec|fixtures?|mocks?|examples?|samples?)(\/|\.|$)|(test|spec)\.(js|ts|mjs|sh)$/i.test(rel)
+        const tag = likelyFake ? '（疑似测试/示例，通常为假值）' : ''
+        if (secretRe.test(txt) && secretHits.length < 10) secretHits.push(rel + tag)
+        if (highEntropyRe.test(txt) && entropyHits.length < 10) entropyHits.push(rel + tag)
       }
     }
   }
   await scan(root)
-  if (hitSecret) findings.push(`[硬编码] ${hitSecret} 个文件命中密钥模式 (api_key/secret/token/password=...)，需人工复核`)
-  if (hitEntropy) findings.push(`[高熵] ${hitEntropy} 个文件含高熵字符串（疑似密钥/base64），需人工复核`)
+  if (secretHits.length) {
+    findings.push(`[硬编码] ${secretHits.length} 个文件命中密钥模式 (api_key/secret/token/password=...)，需人工复核：\n  - ${secretHits.join('\n  - ')}`)
+  }
+  if (entropyHits.length) {
+    findings.push(`[高熵] ${entropyHits.length} 个文件含高熵字符串（疑似密钥/base64），需人工复核：\n  - ${entropyHits.join('\n  - ')}`)
+  }
   // summary
   const summary =
     `隐私/密钥审计: ${root}\n扫描文本文件 ~${scanned}\n` +

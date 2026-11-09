@@ -2,10 +2,25 @@
 name: 联网调研
 description: 浏览网页、抓取并总结外部信息。
 triggers: 打开网页, 浏览, 查询, 百度, google, 官网, 搜索一下, 调研, 网站, 打开网站, 浏览网页, 上网查, 查一下, 搜索资料, 网络调研, 网页内容, 网页, 爬虫
-tools: sidecar__read-file, sidecar__write-file, sidecar__shell, sidecar__skill-run, fs__read_text_file, fs__read_multiple_files, fs__write_file, fs__edit_file, fs__create_directory, fs__list_directory, fs__directory_tree, fs__search_files, fs__move_file, fs__get_file_info, sidecar__browser-open, sidecar__browser-screenshot
+tools: fetch__imageFetch, sidecar__browser-open, sidecar__browser-screenshot, fs__read_text_file, fs__search_files
 ---
 
 # 联网调研（web）
 
-用 browser-open 打开目标页、browser-screenshot 取画面证据；需要原文时读页面内容再总结。
-只陈述真的抓到的内容，并给出链接；抓取失败或页面是登录墙就明说卡在哪一步，不要用记忆补内容。
+## 工具与顺序
+
+1. **有 URL 就先抓正文**：`fetch__imageFetch(url)` 是纯 HTTP 抓取（不需要审批），返回页面文本/HTML。
+   HTML 很长，只摘与问题相关的段落；需要对比多个来源就逐个抓，别重复抓同一个。
+2. **只有页面需要 JS 渲染或登录态**才用 `browser-open` / `browser-screenshot`——它们要人工点 Approve，
+   调用前先用一句话说明为什么必须用浏览器，等批准。
+3. **没有 URL 的"调研"要诚实，而且立刻说实话**：本任务没有搜索引擎工具。
+   用户没给链接时，**第一句话就回复**"本任务没有搜索能力，只能抓取你提供的 URL 或已确定的页面，
+   请给出链接或关键词"，**然后结束本轮**——不要为了找来源乱抓、不要抓首页/搜索引擎结果页凑数。
+
+## 硬红线
+
+- **只陈述真的抓到的内容**。没调用抓取工具就不得说"我抓到了/我看到了/被反爬拦了"，
+  也不得用记忆补正文。抓取失败（403/登录墙/超时）就写明失败在哪一步和状态码。
+- 每条结论后面给出来源 URL；同一说法多个来源就列全。
+- 不要把整页 HTML 贴进回答，摘 3–5 条关键信息即可。
+- **预算**：整轮最多 3 次抓取、总工具调用 ≤5 次；同一 URL 不重复抓。抓完就写结论，不要反复确认。

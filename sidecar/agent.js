@@ -196,11 +196,16 @@ function translateFrame(json, buf) {
 // when nothing has executed yet).
 const TOOLCALL_REJECTED = /tool call validation failed|not in request\.tools|did not match schema/i
 
-const SCHEMA_REPAIR_NOTE = (err) =>
-  `上一轮工具调用被上游校验拒绝：${String(err || '').slice(0, 300)}。`
-  + '请只调用 tools 数组里存在的工具，不要臆造工具名；参数必须严格符合该工具的 JSON Schema'
-  + '（类型、必填项、枚举都要对上）。不确定某个工具怎么用时，改用参数更简单的只读工具，'
-  + '或用最少步骤直接回答。'
+const SCHEMA_REPAIR_NOTE = (err, toolNames) => {
+  const names = Array.isArray(toolNames) ? toolNames.filter(Boolean) : []
+  return (
+    `上一轮工具调用被上游校验拒绝：${String(err || '').slice(0, 300)}。`
+    + '只能调用下面这些工具，名字要与列表逐字一致（区分 - 和 _，不要臆造）：'
+    + (names.length ? names.slice(0, 24).join(', ') : '(见 tools 数组)')
+    + '。参数必须严格符合该工具的 JSON Schema（类型、必填项、枚举都要对上）。'
+    + '不确定某个工具怎么用时，改用参数更简单的只读工具，或用最少步骤直接回答。'
+  )
+}
 
 // Append (not replace) a repair message so the retry keeps the full history and
 // the same tools array — only the instruction changes.
@@ -211,7 +216,10 @@ function withSchemaRepair(bodyBuffer, err) {
   } catch {
     return bodyBuffer
   }
-  const note = { role: 'system', content: SCHEMA_REPAIR_NOTE(err) }
+  const names = body.tools && typeof body.tools === 'object'
+    ? Object.keys(body.tools)
+    : (Array.isArray(body.tools) ? body.tools.map((t) => (t && t.function && t.function.name) || (t && t.name)) : [])
+  const note = { role: 'system', content: SCHEMA_REPAIR_NOTE(err, names) }
   body.messages = Array.isArray(body.messages) ? body.messages.concat(note) : [note]
   return Buffer.from(JSON.stringify(body))
 }
@@ -323,7 +331,8 @@ async function proxySSE(req, res, method, incomingPath, bodyBuffer) {
   // retry replays the whole conversation, so it must never re-execute a side
   // effect (publish, write, shell command) that already succeeded.
   const allowSchemaRepair = incomingPath === '/api/chat'
-  let repaired = false
+  let repairCount = 0
+  let lastRepairWasUnknownTool = false
 
   function startAttempt(body) {
     backendRequest(method, backendPath, body)
@@ -360,18 +369,22 @@ async function proxySSE(req, res, method, incomingPath, bodyBuffer) {
     const handleFrame = (json) => {
       if (json.t === 'error') {
         const msg = String(json.d || '')
-        const canRepair = allowSchemaRepair && !repaired
+        const unknownTool = /not in request\.tools/i.test(msg)
+        // 工具名拼错（- 写成 _）值得再给一次机会；参数/schema 错只重试一次。
+        const budget = unknownTool ? 2 : 1
+        const canRepair = allowSchemaRepair && repairCount < budget
           && (buf.tools || []).length === 0
           && TOOLCALL_REJECTED.test(msg)
         if (canRepair) {
-          repaired = true
+          repairCount += 1
+          lastRepairWasUnknownTool = unknownTool
           repairPlanned = true
           // Keep the exact rejection text: the repair note quotes it so the
           // model knows which parameter it got wrong.
           buf.lastRepairError = msg
           res.write(
             `event: reasoning\ndata: ${JSON.stringify({
-              text: `工具调用参数不符合 schema，正在自动重试一次（${msg.slice(0, 160)}）`,
+              text: `${lastRepairWasUnknownTool ? '工具名不在可用列表里（可能把 - 写成了 _）' : '工具调用参数不符合 schema'}，正在自动重试（第 ${repairCount} 次，上限 ${budget}）；原因：${msg.slice(0, 140)}`,
             })}\n\n`,
           )
           return

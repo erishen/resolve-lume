@@ -82,7 +82,7 @@ test('rejected tool call is retried with a repair note', async () => {
 
   const sse = out.chunks.join('')
   assert.strictEqual(upstreamCalls, 2, 'expected exactly one retry')
-  assert.match(sse, /正在自动重试一次/, 'user should see the retry note')
+  assert.match(sse, /正在自动重试/, 'user should see the retry note')
   assert.match(sse, /审查完成/, 'answer must come from the retried attempt')
   assert.doesNotMatch(sse, /本次运行未完成/, 'the dead attempt must not leave a failure bubble')
 
