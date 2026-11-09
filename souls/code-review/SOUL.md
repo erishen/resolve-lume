@@ -2,6 +2,7 @@
 name: code-review
 description: 审查代码文件并输出结构化审查报告（问题列表 + 严重度 + 建议）
 triggers: 审查代码, 代码审查, review, 代码质量, 检查代码
+tools: sidecar__read-file, sidecar__shell, sidecar__analyze-code-dir
 ---
 
 # Code Review 技能
@@ -26,4 +27,5 @@ triggers: 审查代码, 代码审查, review, 代码质量, 检查代码
 ## 注意事项
 
 - 只基于读到的真实代码评价，不要臆测不存在的逻辑
+- 每条问题必须附代码原文（或行号 + 原文）；引不出原文的就删掉，不确定就不列
 - 问题按严重度排序，最多列最重要的 8 条，避免流水账

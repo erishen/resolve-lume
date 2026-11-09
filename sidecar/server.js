@@ -35,7 +35,7 @@ const toolGuard = require('./toolGuard')
 const { buildAgentChatBody, hasExplicitPublishIntent, hasExplicitPaidIntent } = require('./chatBody')
 const { renderToolCatalog } = require('./toolCatalog')
 const { matchTaskByMessage } = require('./taskMatch')
-const { taskCopy, SCOPES } = require('./taskCopy')
+const { taskCopy, SCOPES, renderSoulPrompt } = require('./taskCopy')
 
 // Human-approval set lives in builtin-exec (single source of truth, shared with
 // the security test). resolve-studio parity: tools stay visible; each gated
@@ -605,7 +605,7 @@ function buildTasks() {
         description: (copy && copy.description) || fm.data.description || '',
         triggers: fm.data.triggers || '',
         includeTools: tools,
-        systemPrompt: fm.body.trim(),
+        systemPrompt: renderSoulPrompt(fm.body.trim(), SOULS_DIR, name),
       })
     }
   } catch {

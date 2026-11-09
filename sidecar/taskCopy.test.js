@@ -8,7 +8,7 @@
 
 const test = require('node:test')
 const assert = require('node:assert')
-const { TASK_COPY, SCOPES, taskCopy } = require('./taskCopy')
+const { TASK_COPY, SCOPES, taskCopy, renderSoulPrompt } = require('./taskCopy')
 
 const BUSINESS = [
   'article-write',
@@ -60,4 +60,12 @@ test('task scopes mirror studio: core / files / web', () => {
 test('unknown ids fall back to soul frontmatter (no invented copy)', () => {
   assert.strictEqual(taskCopy('some-new-soul'), undefined)
   assert.ok(Object.keys(TASK_COPY).length >= 8)
+})
+
+test('${SKILL_DIR} in a soul body becomes the real soul directory', () => {
+  const body = 'run `node ${SKILL_DIR}/scripts/x.mjs`'
+  assert.strictEqual(
+    renderSoulPrompt(body, '/srv/souls', 'post-comment'),
+    'run `node /srv/souls/post-comment/scripts/x.mjs`',
+  )
 })

@@ -121,9 +121,17 @@ const SCOPES = [
   },
 ]
 
+// A soul body is written like a skill doc: `${SKILL_DIR}/scripts/x.mjs`.
+// The model has no shell variable for it, so it used to run the literal path and
+// fail ("node: /scripts/..." ). Substitute the soul's real directory — shell and
+// file tools execute on the sidecar host, which is where SOULS_DIR points.
+function renderSoulPrompt(body, soulsDir, id) {
+  return String(body || '').replace(/\${SKILL_DIR}/g, `${soulsDir}/${id}`)
+}
+
 // Card copy for a task id; unknown ids fall back to whatever the soul declares.
 function taskCopy(id) {
   return TASK_COPY[id]
 }
 
-module.exports = { TASK_COPY, SCOPES, taskCopy }
+module.exports = { TASK_COPY, SCOPES, taskCopy, renderSoulPrompt }
