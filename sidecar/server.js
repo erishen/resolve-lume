@@ -35,6 +35,7 @@ const toolGuard = require('./toolGuard')
 const { buildAgentChatBody, hasExplicitPublishIntent, hasExplicitPaidIntent } = require('./chatBody')
 const { renderToolCatalog } = require('./toolCatalog')
 const { matchTaskByMessage } = require('./taskMatch')
+const { taskCopy, SCOPES } = require('./taskCopy')
 
 // Human-approval set lives in builtin-exec (single source of truth, shared with
 // the security test). resolve-studio parity: tools stay visible; each gated
@@ -575,8 +576,8 @@ function buildTasks() {
   const tasks = [
     {
       id: 'general',
-      name: '通用对话',
-      description: '默认模式：单 agent 直接对话（不启用 PSE 三角色）。',
+      name: taskCopy('general').name,
+      description: taskCopy('general').description,
       triggers: '',
       includeTools: [],
       systemPrompt: '',
@@ -595,10 +596,13 @@ function buildTasks() {
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean)
+      // Card text comes from taskCopy.js (studio-aligned Chinese names); the
+      // soul frontmatter is the fallback and still owns the system prompt.
+      const copy = taskCopy(name)
       tasks.push({
         id: name,
-        name: fm.data.name || name,
-        description: fm.data.description || '',
+        name: (copy && copy.name) || fm.data.name || name,
+        description: (copy && copy.description) || fm.data.description || '',
         triggers: fm.data.triggers || '',
         includeTools: tools,
         systemPrompt: fm.body.trim(),
@@ -607,10 +611,11 @@ function buildTasks() {
   } catch {
     /* souls dir missing -> only the meta tasks remain */
   }
+  const meta = taskCopy('pse-review')
   tasks.push({
     id: 'pse-review',
-    name: 'PSE 三角色评审',
-    description: 'Planner / Specialist / Evaluator 三角色协作，适合需要多视角评审的任务。',
+    name: meta.name,
+    description: meta.description,
     triggers: '',
     includeTools: [],
     systemPrompt: '',
@@ -683,11 +688,6 @@ async function getToolCatalogText() {
   }
   return text
 }
-
-const SCOPES = [
-  { id: 'core', name: '核心', description: '仅内置工具', includeTools: [] },
-  { id: 'files', name: '+文件', description: '允许读写文件', includeTools: ['read', 'write', 'list'] },
-]
 
 // ---------- skills: scan souls dir for SOUL.md ----------
 function scanSkills() {
