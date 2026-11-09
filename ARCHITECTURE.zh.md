@@ -238,6 +238,19 @@ POST /api/tools/call (来自 agent 桥 SIDECAR_TOOLS_URL)
 
 工具面本身也做了裁剪：`MCP_ALLOW` 只能整台服务器开关，所以新增了 `MCP_TOOL_DENY`（agent-httpd `mcp_tool_denied()`，按注册名 `<serverId>__<toolName>` 精确匹配；sidecar `server.js` 用同一份 env 过滤从桥直连发现的工具）。默认砍掉 git 的 21 个写操作/会话态工具，只留 7 个只读的 `status/diff/log/show/blame/branch/remote`（它们都接受显式 `path`，不需要 `git_set_working_dir`）；写操作与切换工作目录仍可经 `shell` 在人工审批下执行。99 → 78。
 
+`FS_ROOTS` 仍是窄的（`souls` / `lume-tools` / `work` / `frameworks` / `personal` /
+`invest-kit`），`read-file` / `write-file` 只在这些目录里放行。审代码这类任务改成走
+MCP 的 `fs__read_text_file`（只读、挂载整个 workspace、没有自建白名单），所以
+`rust-review` 能直接读 `github/` 下的 `.rs`，而写侧仍由 `read-file` / `write-file`
+的根限制兜住——只放开读，不放开写。
+
+审批门也开了一个口子：`shell` 默认每次都要人点，但「纯分析脚本」例外——
+`python3 <souls>/<task>/scripts/stats.py <file>` 只读目标文件、只打印数字，现在
+`needsApproval('shell', args)` 直接放过；判定很窄（解释器必须是 python、脚本必须在
+`souls` 树内且叫 `stats.py`、命令里出现 `; | & > < $ \`` 或换行即失效），
+`sidecar/shellAllow.test.js` 把「带管道/重定向/命令替换」「脚本在树外」「换成 node 或
+别的 .py」都钉成仍要审批。`code-review` 因此不再出现「stats 脚本未获批准，跳过统计」。
+
 --- 
 
 ## 5. PSE 三角色编排

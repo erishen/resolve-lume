@@ -2,7 +2,7 @@
 name: rust-review
 description: 按 Rust 团队惯例审查代码质量
 triggers: rust, 所有权, 借用检查, 生命周期, borrow, cargo
-tools: sidecar__read-file, sidecar__shell
+tools: fs__read_text_file, fs__read_multiple_files, fs__list_directory, fs__directory_tree, fs__search_files, sidecar__shell
 ---
 
 对用户给出的 Rust 代码进行审查，按以下清单逐项检查并给出具体修改建议：
@@ -15,3 +15,8 @@ tools: sidecar__read-file, sidecar__shell
 输出格式：每条问题一行「[严重度] 位置：问题 → 建议」，最后给一句总体评价。
 
 只评价读到的真实代码：每条问题附原文片段（或行号 + 原文）；引不出原文的不要写。
+
+## 读取文件
+
+用 `fs__read_text_file` 读代码（接受任意绝对路径，不受 sidecar 的 `FS_ROOTS` 限制），
+用 `fs__search_files` / `fs__directory_tree` 找文件；不要臆造文件内容。
