@@ -282,6 +282,16 @@ async function proxySSE(req, res, method, incomingPath, bodyBuffer) {
   // /api/tools/call request while C emits nothing. Register this live chat
   // response so progress.js can inject `reasoning` frames into it. Only
   // conversational runs register — /api/tool/run owns its own SSE response.
+  // Long tool runs (PSE 2-6 min, article pipelines 10+ min) can leave the
+  // stream silent long enough for a proxy or the browser to consider it dead.
+  // A comment frame every 15s keeps the socket warm; SSE clients ignore it and
+  // it never enters the transcript.
+  const heartbeat = setInterval(() => {
+    if (!res.writableEnded) res.write(': keep-alive\n\n')
+  }, 15000)
+  heartbeat.unref()
+  res.on('close', () => clearInterval(heartbeat))
+
   const isChatStream = incomingPath === '/api/chat' || incomingPath === '/api/pse'
   // Carry the current user message with the live stream. The .lume tool bridge
   // has no runId, so /api/tools/call uses the sole active stream's message to

@@ -168,6 +168,7 @@ tsm-hub 侧新增了 A2A 面（`/.well-known/agent-card.json`、`/a2a`，以及�
 - **`chat` / `tool-run` 是 POST 非幂等**：断流只报"连接中断"，**绝不自动重发**（避免重复副作用，如重复跑工具 / 重复写入）。
 - **job GET 流（seq 追加日志）**：按指数退避重连 + `snapshot/seq` 去重。
 - 所有代理层 `proxy_buffering off`，SSE 端到端不缓冲。
+- **静默期心跳**：PSE 2–6 分钟、文章流水线 10 分钟以上时，上游可能长时间没有帧，代理/浏览器会判定连接已死。sidecar 在 SSE 响应打开后每 15s 写一帧注释 `: keep-alive`（SSE 客户端忽略，不进正文），`res.close` 时清掉定时器（`unref`，不影响进程退出）。实测 120s 的 `weekly-investment` 流里 7 帧心跳，断流消失。
 
 ### 4.3 模型白名单与 free/paid 切换
 
