@@ -107,7 +107,14 @@ flowchart LR
   "command": "lume-core", "args": "--mcp /app/lume-tools/tools.lume", "approval": false }
 ```
 
-> 限制：agent-httpd 的 MCP 客户端目前无法完成 `node/npx server` 的握手（npx server 会拖死启动），因此 `memory`/`think` 两个 npx server 用空 stub（`mcp-servers-router.stub.json`）覆盖；完整 6 个 MCP 配置仅供前端面板显示（由 sidecar 读取 `deploy/mcp-servers.json`）。实际生效的工具桥只有 `lume-tools` 经 lume-core --mcp。
+> 限制与现状（2026-11-09 更新）：agent-httpd 的 MCP 客户端**只支持 stdio**（`mcp.c` 里非 stdio 直接 skip），且 backend 镜像不含 node/npx，所以 5 个 npx server 一直以来都没接上。
+>
+> 现在的做法是「代理桥」：`lume-tools/mcp_http_proxy.sh` 用容器自带的 `sh`+`curl` 做 stdio ↔ Streamable HTTP 翻译（按响应头保持 `mcp-session-id`，兼容纯 JSON 与 SSE 两种响应），backend 侧统一以 `command=/bin/sh`、`args="<脚本> <upstream-url>"` 拉起，因此 `fs`/`fetch`/`git`/`memory`/`think` 五座 HTTP 桥全部被 agent-httpd 正常握手，工具以 `<serverId>__<tool>` 注册。注意 `args` 在 `cfg_add_server` 里只接受空格分隔的字符串，写成 JSON 数组会被丢掉。
+>
+> 网络前提：`mcp-*` 容器在外部网络 `tsm-hub_default` 上，backend 必须同时加入 `default` 与 `tsm-hub_default` 才能解析这些主机名。前端面板（sidecar 读 `deploy/mcp-servers.json`）跑在宿主上、解析不到容器名，故其状态以后端真实注册的工具快照为准。
+>
+> 容器归属：**五座 MCP 桥全部在 tsm-hub 的 docker-compose.yml 里**（`container_name` 固定、`restart: unless-stopped`、node TCP 健康检查）：`fs`/`memory`/`think` 原本就在，`fetch`/`git` 于 2026-11-09 从 resolve-lume 收归，lume 仓不再定义任何 MCP 容器（原 `deploy/mcp-bridges.compose.yml` 已删除），避免两仓 `docker compose up` 撞容器名。镜像与依赖也一并收归 tsm-hub：`deploy/mcp-bridge.Dockerfile`、`deploy/mcp-git.Dockerfile`（均 `FROM node:20-alpine`，镜像 186MB / 200MB），依赖统一挂 `tsm-hub/mcp/node_modules`（lume 侧 vendored 副本已删，省 ~85MB）。`mcp-fs` / `mcp-git` 对工作区是 `:rw`（lume 要能写文件、git 要能 add/commit），`mcp-git` 用 `GIT_AUTHOR_*` / `GIT_COMMITTER_*` 注入提交身份，否则容器内 `git_commit` 报 "Author identity unknown"。lume 侧 `make mcp-bridges-up/-down/-logs` 已改为转发到 tsm-hub 的同名服务。
+> 网关替换（2026-11-09）：`mcp-fetch` / `mcp-think` 已从 supergateway 换成自研 C 网关 `mcp-gateway`（源码与 Dockerfile 在 `tsm-hub/deploy/`），镜像 186MB→136MB，且容器里少了一个 node 进程（fetch 62→17MiB、think 116→35MiB anon）。并行模型：每条 HTTP 连接一个线程、一个 `mcp-session-id` 一个子进程、会话内按内部 id 混流收发；已知边界：最多 4 个会话（满了淘汰最久未用的空闲会话）、空闲 30 分钟回收、`GET /mcp` 的 SSE 下行流未实现（回 405）。五个 `mcp-*` 已全部切换：`fs`/`memory`/`fetch`/`think` 用 `mcp-gateway:latest`（136MB），`git` 用 `mcp-gateway-git:latest`（150MB）；`mcp-bridge`/`mcp-bridge-git`（186/200MB）仅留作回滚镜像。稳态内存（cgroup anon，跑过工具后）由约 684MiB 降到约 371MiB，少的是每容器那层 supergateway 的 node 进程。
 
 ---
 
@@ -233,7 +240,7 @@ PSE（Planner / Specialist / Evaluator）是 resolve-studio 的核心编排模�
 ## 9. 已知限制与路线图
 
 - **未含**：job 持久化/续跑、前端外围面板、Python PSE 框架（两端共享外部依赖）。
-- **MCP 受限**：agent-httpd MCP 客户端无法握手 `node/npx server`，`memory`/`think` 用 stub 覆盖，仅 `lume-tools` 经 lume-core --mcp 生效。
+- **MCP 已打通**：agent-httpd 只支持 stdio，故 5 座 Streamable HTTP 桥由 `lume-tools/mcp_http_proxy.sh` 做协议翻译后以 stdio 接入（`fs`/`fetch`/`git`/`memory`/`think` 全部 resident，工具数 46 → 99）；`deploy/mcp-servers-router.stub.json` 仍为空数组，用于阻止 router 注入 npx server。
 - **导出脱敏**：前端 `export.ts` 会剥除账户名、掩码凭据、截断 3000 字（含私有工作区根名剥离）。
 - **本地纪律**：项目遵循 "local commit only, no push"；`agent-httpd` / `lume-core` 已从 git 子模块改为 vendored 同名目录（从 GitHub release 拉源码），不再多仓协同提交。
 

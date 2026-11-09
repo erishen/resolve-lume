@@ -94,7 +94,7 @@ resolve-lume/
 | 前端聊天 UI | ✅ 基础版 | 流式渲染 + PSE 开关 + 工具列表 |
 | **后台 job 持久化 / 续跑** | ✅ 已覆盖 | sidecar `/api/jobs` 落 SQLite（`node:sqlite`, WAL, 增量事件插入 O(1)，有事务）；取消会中断上游、续跑带历史 |
 | **shell / write_file 内置工具** | ✅ 已覆盖 | sidecar 本地执行 11 个工具（read/write/shell/make/analyze-dir/privacy-audit/stock-scan…），schema 与实现同源 |
-| 会话管理 UI / MCP 管理 UI | ⚠️ 部分 | 会话已持久化 + 侧栏可用；MCP 面板目前只读展示 |
+| 会话管理 UI / MCP 管理 UI | ✅ 已覆盖 | 会话已持久化 + 侧栏可用；MCP 面板展示 6 个 server 的真实状态与工具数（状态以后端已注册工具为准） |
 | 工作区分析 / VNC 桌面登录 / skills / usage | ⚠️ 部分 | skills/usage/workspace 已实现（souls 扫描 + `/api/usage` + `scanWorkspace`）；tasks-match 仅关键词匹配；VNC 桌面登录未启用 |
 | Python PSE 框架 (autogen/crewai/…) | ⚠️ 共享依赖 | 两端都 `uv run python run.py` 调起，谁都替代不了 |
 
