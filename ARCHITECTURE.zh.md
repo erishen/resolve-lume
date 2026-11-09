@@ -227,7 +227,9 @@ POST /api/tools/call (来自 agent 桥 SIDECAR_TOOLS_URL)
 的 done 帧 → 在消息末尾追加一条 system 修复提示（说明被拒原因、要求只调
 `tools` 里存在的名字、参数严格按 Schema）→ 用同一份 tools 重发一次；重试只在
 **本轮还没有任何工具执行过**时触发，绝不会重放 `shell` / 发布 / 写文件这类已成功
-的副作用。`sidecar/schemaRepair.test.js` 用假上游覆盖了三条边界：修复成功、
+的副作用。修复提示里会列出本轮 `tools` 的真实名字（截前 24 个），并区分两类拒绝：
+「工具名不在 request.tools」（多是把 `-` 写成 `_`）给 **2 次** 重试，参数 / Schema
+不符仍只给 **1 次**。`sidecar/schemaRepair.test.js` 用假上游覆盖了三条边界：修复成功、
 第二次仍拒绝不无限重试、已有工具执行则拒绝重放。
 
 任务目录也与 studio 对齐（2026-11-09）：`sidecar/taskCopy.js` 提供业务向中文名 + 一句话描述
