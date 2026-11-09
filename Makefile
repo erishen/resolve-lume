@@ -109,6 +109,14 @@ sidecar-host-start:
 
 # 停 launcher（其内部 SIGTERM 处理会连带停掉 sidecar 子进程）并清 pidfile
 sidecar-host-stop:
+	@# launchd 托管的 launcher 不写 launcher.pid，旧逻辑会打印「未启动？」然后静默空跑，
+	@# 导致改了 sidecar/ 后 make stop && make start 其实什么都没重启。先识别 launchd。
+	@if [ ! -f .data-sidecar/launcher.pid ] && launchctl list 2>/dev/null | grep -q com.erishen.resolve-lume.launcher; then \
+		echo "launcher 由 launchd 托管（com.erishen.resolve-lume.launcher），本目标不适用。"; \
+		echo "重启 sidecar 请用: make sidecar-host-restart"; \
+		echo "彻底卸载自启请用: make sidecar-autostart-uninstall"; \
+		exit 1; \
+	fi
 	@if [ ! -f .data-sidecar/launcher.pid ]; then echo "launcher.pid 不存在（未启动？）"; \
 	else \
 		LPID=$$(cat .data-sidecar/launcher.pid); \
@@ -124,6 +132,23 @@ sidecar-host-stop:
 		else echo "launcher pid=$$LPID 已死，仅清理 pidfile"; fi; \
 	fi
 	@rm -f .data-sidecar/launcher.pid .data-sidecar/sidecar.pid
+
+# 重启宿主 sidecar：改了 sidecar/*.js 后用这个。
+# launchd 托管时 pidfile 不存在，stop/start 那对目标会空跑，这里统一走 kickstart。
+sidecar-host-restart:
+	@if launchctl list 2>/dev/null | grep -q com.erishen.resolve-lume.launcher; then \
+		echo "launchd 托管中 → kickstart 重启 launcher"; \
+		launchctl kickstart -k gui/$$(id -u)/com.erishen.resolve-lume.launcher; \
+	else \
+		$(MAKE) sidecar-host-stop && $(MAKE) sidecar-host-start; \
+	fi
+	@printf "waiting for sidecar http://127.0.0.1:3000 "
+	@i=0; \
+	until curl --noproxy '*' -fsS -m 2 http://127.0.0.1:3000/api/tools/token >/dev/null 2>&1 \
+	   || curl --noproxy '*' -fsS -m 2 http://127.0.0.1:3000/health >/dev/null 2>&1; do \
+		i=$$((i+1)); if [ $$i -ge 30 ]; then echo ""; echo "sidecar 未就绪，看 .data-sidecar/sidecar.log"; exit 1; fi; \
+		printf "."; sleep 2; \
+	done; echo " ok"
 
 # 状态速查：launcher 存活 + sidecar 存活 + 两端 /health + 3000 是否被容器 sidecar 抢占
 sidecar-host-status:
@@ -261,4 +286,4 @@ shell-vars-check:
 check: tools-lume-check test-gateway frontend-test shell-vars-check
 	@echo "✓ 工具桥生成约束 + 四处名单一致性 + 网关/SSE/进度/工具护栏/导出回归 + shell 变量兼容检查全部通过"
 
-.PHONY: setup build up wait start down logs frontend-up sidecar-host-start sidecar-host-stop sidecar-host-status sidecar-autostart-install sidecar-autostart-uninstall sidecar-autostart-restart sidecar-autostart-status tools-lume tools-lume-check vendor bootstrap peer-check peer-serve test-gateway frontend-test frontend-build-check shell-vars-check check
+.PHONY: setup build up wait start down logs frontend-up mcp-bridges-up mcp-bridges-down mcp-bridges-logs sidecar-host-start sidecar-host-stop sidecar-host-restart sidecar-host-status sidecar-autostart-install sidecar-autostart-uninstall sidecar-autostart-restart sidecar-autostart-status tools-lume tools-lume-check vendor bootstrap peer-check peer-serve test-gateway frontend-test frontend-build-check shell-vars-check check
