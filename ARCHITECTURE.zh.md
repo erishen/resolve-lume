@@ -213,6 +213,10 @@ POST /api/tools/call (来自 agent 桥 SIDECAR_TOOLS_URL)
 严格校验 schema 的 MCP server 会把「不认识的参数」当错误返回，模型于是拿同一份 args
 再重试（实测连打 6 次 `git_status` 直到 8 轮预算耗尽）。
 
+模型把工具调用写成正文时，两层兜底：后端 `salvage_declared_call()` 解析出
+`name` + 平衡的 `arguments` 对象后直接派发（不再只靠催它重发），sidecar 收到无法
+解析的残片答案时替换成「模型把工具调用写成了正文」的说明，绝不把那截 JSON 当答复。
+
 工具面本身也做了裁剪：`MCP_ALLOW` 只能整台服务器开关，所以新增了 `MCP_TOOL_DENY`（agent-httpd `mcp_tool_denied()`，按注册名 `<serverId>__<toolName>` 精确匹配；sidecar `server.js` 用同一份 env 过滤从桥直连发现的工具）。默认砍掉 git 的 21 个写操作/会话态工具，只留 7 个只读的 `status/diff/log/show/blame/branch/remote`（它们都接受显式 `path`，不需要 `git_set_working_dir`）；写操作与切换工作目录仍可经 `shell` 在人工审批下执行。99 → 78。
 
 --- 

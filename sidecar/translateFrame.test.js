@@ -130,6 +130,24 @@ const cases = [
     want: ['⚠️ 本次运行未完成', '429'],
     avoid: ['调用轨迹'],
   },
+  {
+    name: 'tool-call fragment as the whole answer is replaced by a notice',
+    frames: [
+      { t: 'delta', d: '"arguments": {}}' },
+      { t: 'done' },
+    ],
+    want: ['写成了正文', '没有执行它'],
+    avoid: ['"arguments": {}}'.slice(0, 8)],
+  },
+  {
+    name: 'a real answer that quotes config JSON is left alone',
+    frames: [
+      { t: 'delta', d: '配置项 "name": "value" 已经写在 .env 里，重启 sidecar 生效。' },
+      { t: 'done' },
+    ],
+    want: ['重启 sidecar 生效'],
+    avoid: ['写成了正文'],
+  },
 ]
 
 let failed = 0

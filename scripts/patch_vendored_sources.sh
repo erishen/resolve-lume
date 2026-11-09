@@ -64,6 +64,15 @@ fi
 # ToolRec.desc[161] 是「工具只能带一句话」的真正天花板（bridge_mcp.c 原样把该
 # 字段当 MCP description 发出）。99 工具面下，juejin-draft/juejin-publish、
 # shell/make 这类相近名字靠一句话分不开，模型只能猜。
+# ---- 6) agent-httpd: 把「写成正文的工具调用」捞回来执行 ----------------------
+# 小模型偶尔把 {"name":..,"arguments":..} 当正文发出来。只催它重发，它可能
+# 一直重犯，最后把那截 JSON 当答案回给用户。这里直接解析并派发这一次调用。
+if [ -d "$AH" ]; then
+  python3 "$ROOT/deploy/patch_agent_httpd_salvage.py" "$AH"
+else
+  echo "[patch] 跳过：$AH 不存在（先 make vendor）"
+fi
+
 LC="$ROOT/lume-core"
 if [ -d "$LC" ]; then
   python3 "$ROOT/deploy/patch_lume_core_tool_desc.py" "$LC"

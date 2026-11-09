@@ -80,6 +80,19 @@ function emptyRunSummary(buf) {
   return lines.join('\n')
 }
 
+// A model that pasted a tool call into prose can end the run with nothing but
+// the JSON fragment ("arguments": {}}). agent-httpd now salvages calls it can
+// parse; when parsing fails the fragment must never be shown as the answer.
+// Heuristic: short, starts like JSON, mentions arguments/tool_calls/function and
+// carries no sentence punctuation — a real answer quoting config has prose around it.
+function looksLikeToolCallText(text) {
+  const s = String(text || '').trim()
+  if (!s || s.length > 400) return false
+  const jsonish = s.startsWith('{') || s.startsWith('"arguments"') || s.startsWith('"name"')
+  const key = /"(arguments|tool_calls|function|name)"\s*:/.test(s)
+  return jsonish && key
+}
+
 function translateFrame(json, buf) {
   const t = json.t
   const d = json.d
@@ -156,6 +169,16 @@ function translateFrame(json, buf) {
     }
     if (!answer) {
       answer = emptyRunSummary(buf)
+    }
+    if (looksLikeToolCallText(answer)) {
+      const steps = (buf.tools || []).slice(-12)
+        .map((s) => (s.count > 1 ? `${s.name} ×${s.count}` : s.name))
+        .join(' → ')
+      answer = [
+        '⚠️ 模型把工具调用写成了正文，系统没有执行它，也不会把它当作答案。',
+        `调用轨迹：${steps || '无（没有成功发出的工具调用）'}`,
+        '请重试一次；若反复出现，把请求换成更具体的指令（例如「用 shell 执行 echo ok」或给出完整路径）。',
+      ].join('\n')
     }
     buf.text = answer
     return `event: done\ndata: ${JSON.stringify({ answer })}\n\n`
@@ -331,4 +354,4 @@ function normalizeTools(payload) {
   }
 }
 
-module.exports = { proxySSE, proxyJSON, normalizeTools, agentPath, translateFrame }
+module.exports = { proxySSE, proxyJSON, normalizeTools, agentPath, translateFrame, looksLikeToolCallText }
