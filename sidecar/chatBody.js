@@ -54,6 +54,14 @@ function buildAgentChatBody(body, task) {
     history,
     model: typeof body.model === 'string' ? body.model : '',
   }
+  // Carry the conversation id to agent-httpd. The C loop stamps it onto every
+  // MCP tool call as "_lume_session", which is what lets the sidecar target the
+  // right chat stream for approval prompts and progress frames even when two
+  // conversations run at once. Dropping it here silently downgrades the gate to
+  // "newest stream wins" (2026-11-09).
+  if (typeof body.sessionId === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(body.sessionId)) {
+    agentBody.sessionId = body.sessionId
+  }
   const parts = []
   if (task && task.systemPrompt) parts.push(task.systemPrompt)
   if (typeof body.systemPrompt === 'string' && body.systemPrompt) {

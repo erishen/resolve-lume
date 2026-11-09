@@ -55,6 +55,9 @@ function registerChatStream(res, meta = {}) {
     // Current user message of this chat run. Used to authorize side-effecting
     // tool parameters (publish=true) without a runId in the .lume tool bridge.
     userMessage: String(meta.userMessage || ''),
+    // Conversation id (agent-httpd echoes it on every tool call as
+    // "_lume_session"), so a tool call can be routed to the exact stream.
+    sessionId: String(meta.sessionId || ''),
   })
   return id
 }
@@ -93,6 +96,38 @@ function latestChatUserMessage() {
   return (latest && latest.userMessage) || ''
 }
 
+/**
+ * Inject one progress line into the stream of a specific conversation. Falls
+ * back to the sole active stream only when the caller has no sessionId, which
+ * keeps old/unknown callers working without ever leaking one chat's log into
+ * another (the reason concurrent streams used to be dropped).
+ */
+/**
+ * User message of the conversation that issued the call. Exact when the call
+ * carries a sessionId; falls back to the newest stream without one (publish /
+ * paid gates). Returns '' when nothing matches — those gates fail closed.
+ */
+function chatUserMessageForSession(sessionId) {
+  const s = chatStreamForSession(sessionId)
+  if (s) return s.userMessage || ''
+  return sessionId ? '' : latestChatUserMessage()
+}
+
+function broadcastToSession(sessionId, text) {
+  const target = sessionId ? chatStreamForSession(sessionId) : null
+  if (!target) {
+    if (sessionId) return false
+    return broadcastToActiveChat(text)
+  }
+  if (!target.res || target.res.writableEnded || target.res.destroyed) return false
+  try {
+    target.res.write(reasoningFrame(text))
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** Inject one progress line into the sole active chat stream. Returns false on skip. */
 function broadcastToActiveChat(text) {
   if (streams.size !== 1) return false
@@ -124,6 +159,14 @@ function activeChatStreamIds() {
   return [...streams.keys()]
 }
 
+/** Stream that belongs to this conversation id (null when none is live). */
+function chatStreamForSession(sessionId) {
+  const sid = String(sessionId || '')
+  if (!sid) return null
+  for (const s of streams.values()) if (s.sessionId === sid) return s
+  return null
+}
+
 function approvalRequestFrame(call) {
   return `event: approval-request\ndata: ${JSON.stringify({ call })}\n\n`
 }
@@ -134,8 +177,8 @@ function approvalRequestFrame(call) {
  * side-effecting tool unattended). Mirrors latestChatUserMessage()'s single
  * newest-stream correlation rule.
  */
-function sendApprovalRequest(call) {
-  const latest = latestChatStream()
+function sendApprovalRequest(call, sessionId) {
+  const latest = sessionId ? chatStreamForSession(sessionId) : latestChatStream()
   const res = latest && latest.res
   if (!res || res.writableEnded || res.destroyed) return false
   try {
@@ -275,7 +318,11 @@ module.exports = {
   reasoningFrame,
   approvalRequestFrame,
   sendApprovalRequest,
+  latestChatStream,
   latestChatStreamId,
+  chatStreamForSession,
+  chatUserMessageForSession,
+  broadcastToSession,
   activeChatStreamIds,
   registerChatStream,
   unregisterChatStream,

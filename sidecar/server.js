@@ -896,6 +896,14 @@ async function handle(req, res) {
     const body = await readBody(req)
     const toolName = body.name
     const toolArgs = body.arguments || body.args || {}
+    // agent-httpd stamps the chat's sessionId onto every MCP tool call as
+    // "_lume_session" (agent-httpd/src/agent/mcp.c). It is transport metadata,
+    // not a tool argument: pull it out before validation, dedupe and execution,
+    // and use it to target the exact chat stream.
+    const callSession = typeof toolArgs._lume_session === 'string' ? toolArgs._lume_session : ''
+    if (Object.prototype.hasOwnProperty.call(toolArgs, '_lume_session')) {
+      delete toolArgs._lume_session
+    }
     if (builtin.BUILTIN_NAMES.has(toolName)) {
       // Called by the agent-httpd bridge (SIDECAR_TOOLS_URL), NOT by the UI.
       // Enforce the generated bridge's allowlist server-side: previously the
@@ -912,7 +920,7 @@ async function handle(req, res) {
       // Only the current chat message can authorize it; the tool panel path
       // (/api/tool/run) is a deliberate human action and stays unrestricted.
       if (toolName === 'article-write' && toolArgs && toolArgs.publish === true &&
-          !hasExplicitPublishIntent(progress.activeChatUserMessage())) {
+          !hasExplicitPublishIntent(progress.chatUserMessageForSession(callSession))) {
         return send(res, 200, {
           name: toolName,
           result:
@@ -929,8 +937,8 @@ async function handle(req, res) {
       // stream (latestChatUserMessage) — with a stale second stream the old
       // sole-stream lookup returned '' and rejected an explicit 发布.
       // With no chat stream at all it still fails closed.
-      const publishIntentMsg = progress.latestChatUserMessage()
-      console.log(`[publish-gate] tool=${toolName} confirm=${toolArgs && toolArgs.confirm} streams=${progress.activeChatStreamCount()} msg=${JSON.stringify(String(publishIntentMsg).slice(0, 60))}`)
+      const publishIntentMsg = progress.chatUserMessageForSession(callSession)
+      console.log(`[publish-gate] tool=${toolName} confirm=${toolArgs && toolArgs.confirm} session=${callSession || '-'} streams=${progress.activeChatStreamCount()} msg=${JSON.stringify(String(publishIntentMsg).slice(0, 60))}`)
       if (toolName === 'article-publish' && toolArgs && toolArgs.confirm === true &&
           !hasExplicitPublishIntent(publishIntentMsg)) {
         return send(res, 200, {
@@ -967,7 +975,7 @@ async function handle(req, res) {
       // Human-in-the-loop gate (resolve-studio parity, 2026-11-09). Runs after
       // the cheap refusals above so a rejected-payload call never prompts.
       if (builtin.needsApproval(toolName, toolArgs)) {
-        const ap = await approval.request(toolName, toolArgs)
+        const ap = await approval.request(toolName, toolArgs, callSession)
         console.log(`[approval-gate] tool=${toolName} decision=${ap.decision} reason=${ap.reason || '-'} pending=${approval.pendingCount()}`)
         if (ap.decision !== 'approve') {
           const why = ap.reason === 'timeout'
@@ -988,7 +996,7 @@ async function handle(req, res) {
       // though, so mirror the child process log into that stream (see
       // progress.js for the single-active-stream correlation rule).
       const pub = progress.createProgressPublisher(
-        progress.broadcastToActiveChat, toolName,
+        (text) => progress.broadcastToSession(callSession, text), toolName,
       )
       let text = ''
       let failed = null

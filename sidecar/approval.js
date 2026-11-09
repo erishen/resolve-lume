@@ -30,18 +30,18 @@ const TIMEOUT_MS = Number(process.env.SIDECAR_APPROVAL_TIMEOUT_MS || 120_000)
 // approves a tool inside one chat run, later calls of THAT tool in the SAME run
 // skip the prompt (the UI shows "approval skipped (already approved this run)").
 // Keyed by chat stream id, which is the closest thing lume has to a run id.
-/** @type {Map<number, Set<string>>} */
+/** @type {Map<string, Set<string>>} */
 const approvedByStream = new Map()
 
-function memoGet(streamId, name) {
-  const set = approvedByStream.get(streamId)
+function memoGet(key, name) {
+  const set = approvedByStream.get(key)
   return !!(set && set.has(name))
 }
 
-function memoAdd(streamId, name) {
-  if (streamId == null) return
-  let set = approvedByStream.get(streamId)
-  if (!set) approvedByStream.set(streamId, (set = new Set()))
+function memoAdd(key, name) {
+  if (key == null) return
+  let set = approvedByStream.get(key)
+  if (!set) approvedByStream.set(key, (set = new Set()))
   set.add(name)
   // Drop memos of finished chats; they are worthless and would leak slowly.
   if (approvedByStream.size > 8) {
@@ -62,16 +62,21 @@ function newCallId() {
  * reason: 'no-chat' when no live chat stream exists (fail closed),
  *         'timeout' when nobody answered within TIMEOUT_MS.
  */
-function request(name, args) {
-  if (progress.activeChatStreamCount() === 0) {
+function request(name, args, sessionId) {
+  const sid = String(sessionId || '')
+  const target = sid ? progress.chatStreamForSession(sid) : progress.latestChatStream()
+  // A call that names a conversation we cannot find is NOT auto-approved: it
+  // means the chat already ended (or the id is bogus), and the safe answer is
+  // no. Calls without any sessionId keep the old newest-stream behaviour.
+  if (!target || progress.activeChatStreamCount() === 0) {
     return Promise.resolve({ decision: 'reject', reason: 'no-chat', call: null })
   }
-  const streamId = progress.latestChatStreamId()
-  if (memoGet(streamId, name)) {
+  const memoKey = sid || `stream:${target.id}`
+  if (memoGet(memoKey, name)) {
     return Promise.resolve({ decision: 'approve', reason: 'memo', call: null })
   }
   const call = { id: newCallId(), name, arguments: args || {} }
-  if (!progress.sendApprovalRequest(call)) {
+  if (!progress.sendApprovalRequest(call, sid)) {
     return Promise.resolve({ decision: 'reject', reason: 'no-chat', call })
   }
   return new Promise((resolve) => {
@@ -80,7 +85,7 @@ function request(name, args) {
       pending.delete(call.id)
       resolve({ decision: 'reject', reason: 'timeout', call })
     }, TIMEOUT_MS)
-    pending.set(call.id, { resolve, timer, streamId, name })
+    pending.set(call.id, { resolve, timer, memoKey, name })
   })
 }
 
@@ -90,7 +95,7 @@ function resolve(callId, decision) {
   if (!entry) return false
   pending.delete(String(callId))
   clearTimeout(entry.timer)
-  if (decision === 'approve') memoAdd(entry.streamId, entry.name)
+  if (decision === 'approve') memoAdd(entry.memoKey, entry.name)
   entry.resolve({ decision: decision === 'approve' ? 'approve' : 'reject', call: null, reason: 'user' })
   return true
 }

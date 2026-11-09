@@ -97,6 +97,44 @@ test('arg-level rule: read-only article-publish is not gated, confirm=true is', 
   assert.equal(B.needsApproval('pse-review', { provider: 'deepseek' }), false, 'paid tier uses the intent gate')
 })
 
+test('concurrent chats: prompt goes to the stream of the calling session', async () => {
+  const a = fakeStream()
+  const b = fakeStream()
+  const ida = progress.registerChatStream(a.res, { userMessage: '会话 A', sessionId: 'sess-aaa' })
+  const idb = progress.registerChatStream(b.res, { userMessage: '会话 B', sessionId: 'sess-bbb' })
+  const p = approval.request('make', { dir: 'work/a' }, 'sess-aaa')
+  await new Promise((r) => setTimeout(r, 5))
+  assert.equal(a.frames.length, 1, 'prompt lands on session A')
+  assert.equal(b.frames.length, 0, 'session B never sees it')
+  approval.resolve(JSON.parse(a.frames[0].split('data: ')[1]).call.id, 'approve')
+  assert.equal((await p).decision, 'approve')
+  progress.unregisterChatStream(ida)
+  progress.unregisterChatStream(idb)
+})
+
+test('unknown session fails closed instead of picking another chat', async () => {
+  const a = fakeStream()
+  const id = progress.registerChatStream(a.res, { userMessage: '会话 A', sessionId: 'sess-aaa' })
+  const r = await approval.request('shell', { command: 'pwd' }, 'sess-gone')
+  assert.equal(r.decision, 'reject')
+  assert.equal(r.reason, 'no-chat')
+  assert.equal(a.frames.length, 0)
+  progress.unregisterChatStream(id)
+})
+
+test('progress frames are routed by session, not by stream count', () => {
+  const a = fakeStream()
+  const b = fakeStream()
+  const ida = progress.registerChatStream(a.res, { userMessage: 'A', sessionId: 'sess-a' })
+  const idb = progress.registerChatStream(b.res, { userMessage: 'B', sessionId: 'sess-b' })
+  assert.equal(progress.broadcastToSession('sess-b', 'log B'), true)
+  assert.equal(a.frames.length, 0)
+  assert.equal(b.frames.length, 1)
+  assert.equal(progress.broadcastToSession('sess-unknown', 'nope'), false)
+  progress.unregisterChatStream(ida)
+  progress.unregisterChatStream(idb)
+})
+
 test('resolving an unknown or late callId applies nothing', () => {
   assert.equal(approval.resolve('call-doesnotexist', 'approve'), false)
 })
