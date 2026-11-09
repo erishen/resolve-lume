@@ -11,12 +11,22 @@ const path = require('path')
 const H = require('./business-helpers')
 const { isSafeMakeVarValue } = require('./security')
 
+// 把整句检索词拆成可单独检索的项：空白 + 中文连接词（的/和/与/及/或）都算分隔，
+// 丢掉单字项（命中噪音太大）。用于严格匹配 0 命中时的放宽。
+function docSearchTerms(q) {
+  return String(q || '')
+    .split(/[\s,，、;；:：]+|的|和|与|及|或/)
+    .map((t) => t.trim())
+    .filter((t) => t && ([...t].length >= 2 || /^[A-Za-z0-9]{2,}$/.test(t)))
+}
+
 // ===================== doc-library-search =====================
 const MARKDOWN_LIBRARY_URL = process.env.MARKDOWN_LIBRARY_URL || 'http://127.0.0.1:3300'
 const MARKDOWN_LIBRARY_KEY = process.env.MARKDOWN_LIBRARY_KEY || ''
 const MARKDOWN_LIBRARY_DIR = process.env.MARKDOWN_LIBRARY_DIR || ''
 
 module.exports = {
+  docSearchTerms,
   'doc-library-search': async function docLibrarySearch(a) {
     const q = String((a && a.q) || '').trim()
     if (!q) return 'error: doc-library-search 需要 q 参数（检索词）。'
@@ -29,21 +39,51 @@ module.exports = {
         `启动：cd ${MARKDOWN_LIBRARY_DIR || '<markdown-library 根目录 (设置 MARKDOWN_LIBRARY_DIR)>'} && make run（需先 cp .env.example .env）`
       )
     }
+    const headers = MARKDOWN_LIBRARY_KEY ? { 'x-api-key': MARKDOWN_LIBRARY_KEY } : undefined
+    const search = async (term) => {
+      const r = await H.httpGetJson(`${MARKDOWN_LIBRARY_URL}/api/docs?q=${encodeURIComponent(term)}`, { headers })
+      const list = (r.ok && r.data && r.data.items) || []
+      return Array.isArray(list) ? list : []
+    }
     const out = []
-    const res = await H.httpGetJson(
-      `${MARKDOWN_LIBRARY_URL}/api/docs?q=${encodeURIComponent(q)}`,
-      { headers: MARKDOWN_LIBRARY_KEY ? { 'x-api-key': MARKDOWN_LIBRARY_KEY } : undefined },
-    )
-    const items = (res.ok && res.data && res.data.items) || []
-    const rows = Array.isArray(items) ? items : []
-    out.push(`检索「${q}」命中 ${rows.length} 篇：`, '')
-    for (const d of rows.slice(0, 20)) {
-      const title = d.title || d.name || d.path || '?'
-      const snippet = d.snippet || d.excerpt || ''
+    let rows = await search(q)
+    let relaxedBy = ''
+    // 服务端检索是 AND 语义（每个词都要命中），整句提问（"RAG 的实现思路"、
+    // "投资 组合"）经常 0 命中，被上层当成"文档库是空的"。这里按词放宽再合并。
+    if (!rows.length) {
+      const terms = docSearchTerms(q)
+      if (terms.length > 1) {
+        const merged = []
+        const seen = new Set()
+        for (const term of terms.slice(0, 4)) {
+          for (const d of await search(term)) {
+            const key = String(d.id ?? d.relative_path ?? d.title ?? '')
+            if (seen.has(key)) continue
+            seen.add(key)
+            merged.push(d)
+          }
+        }
+        if (merged.length) {
+          rows = merged
+          relaxedBy = terms.join(' / ')
+        }
+      }
+    }
+    if (relaxedBy) {
+      out.push(`检索「${q}」严格匹配 0 篇，已按分词放宽（${relaxedBy}）命中 ${rows.length} 篇：`, '')
+    } else {
+      out.push(`检索「${q}」命中 ${rows.length} 篇：`, '')
+    }
+    for (const d of rows.slice(0, 12)) {
+      const title = d.title || d.name || d.relative_path || '?'
+      // 命中高亮由服务端用 \u0001/\u0002 包裹，正文里要清掉，否则模型会当成乱码。
+      const snippet = String(d.snippet || d.excerpt || '').replace(/[\u0001\u0002]/g, '')
       const ts = Number(d.updated_at || 0)
       const when = ts > 0 ? new Date(ts * 1000).toLocaleDateString('zh-CN') : ''
       out.push(`- **${title}**${when ? `（${when}）` : ''}`)
-      if (snippet) out.push(`  ${String(snippet).slice(0, 160)}`)
+      const file = [d.base_path, d.relative_path].filter(Boolean).join('/').replace(/\/{2,}/g, '/')
+      if (file) out.push(`  来源：${file}`)
+      if (snippet) out.push(`  ${snippet.slice(0, 160)}`)
     }
     if (!rows.length) out.push('（无命中）')
     if (a && a.check_broken) {
