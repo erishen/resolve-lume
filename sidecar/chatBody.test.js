@@ -60,6 +60,9 @@ test('message/history split keeps only the latest user message out of history', 
 test('discipline covers numbering, retries and the mandatory final summary', () => {
   assert.match(TOOL_DISCIPLINE, /编号原样传给对应工具/)
   assert.match(TOOL_DISCIPLINE, /严禁用完全相同的参数重复调用/)
+  // Paraphrased tool output was a real failure mode: the git status summary
+  // listed a file that did not exist and dropped ones that did.
+  assert.match(TOOL_DISCIPLINE, /文件名、目录、提交哈希、计数、金额必须逐字复制工具输出/)
   assert.match(TOOL_DISCIPLINE, /必须输出面向用户的中文文字总结/)
 })
 
