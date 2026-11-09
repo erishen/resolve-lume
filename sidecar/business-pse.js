@@ -19,6 +19,22 @@ const RUN_TIMEOUT_MS = 1_800_000
 const RUN_MAX_OUTPUT = 4 << 20 // match execFile maxBuffer so the marker survives
 const REVIEW_SAVED_RE = /Review 已保存 →\s*(\S+)/
 
+// Operator safety switch, same contract as the weekly-investment skill script:
+// the paid DeepSeek route must be enabled explicitly in autogen-pse/.env
+// (PSE_ALLOW_PAID=1). Without it the builtin used to run deepseek silently —
+// real money, no approval. Read the file per call so flipping the switch does
+// not need a sidecar restart.
+async function pseAllowPaid(autogenPse) {
+  try {
+    const txt = await fsp.readFile(path.join(autogenPse, '.env'), 'utf8')
+    for (const line of txt.split(/\r?\n/)) {
+      const m = /^PSE_ALLOW_PAID\s*=\s*(.*)$/.exec(line.trim())
+      if (m) return /^1|true|yes/i.test(m[1].replace(/["']/g, '').trim())
+    }
+  } catch { /* missing .env means the switch is off */ }
+  return false
+}
+
 function buildRunEnv(provider) {
   const env = { ...process.env }
   if (provider === 'deepseek') {
@@ -82,6 +98,15 @@ module.exports = {
       return `error: pse-review — ${e.message}`
     }
     const provider = (args && args.provider) || H.getPseProvider()
+    if (provider === 'deepseek' && !(await pseAllowPaid(autogenPse))) {
+      return (
+        'error: DEEPSEEK_GATED\n' +
+        '⚠️ DeepSeek（付费）未启用：这是操作员级安全开关，等价于一次性审批。\n' +
+        '请先在本机 frameworks/autogen-pse/.env 设置 PSE_ALLOW_PAID=1，再让用户重试。\n' +
+        '本次未调用模型、未产生任何费用。请勿编造报告，把以上提示原样转述给用户；' +
+        '默认免费路径（provider=router / agnes）不受此开关影响。'
+      )
+    }
     const runEnv = buildRunEnv(provider)
     const prep = await H.runPseTask({
       tool: 'pse-review',
@@ -792,3 +817,7 @@ module.exports = {
     ].join('\n')
   },
 }
+
+// test seam: the paid gate is the only thing standing between a task prompt
+// and a real DeepSeek invoice, so its parsing is unit-tested directly.
+module.exports.__pseAllowPaid = pseAllowPaid

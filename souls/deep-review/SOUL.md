@@ -9,7 +9,9 @@ tools: sidecar__read-file, sidecar__write-file, sidecar__shell, sidecar__skill-r
 
 本任务跑「付费 DeepSeek 深度复盘」：调用 `pse-review` 工具时必须显式传 provider='deepseek'。
 该分支经网关走 deepseek 模型（深求主路 + 同模型兜底），费用约 ¥0.1–1/次，
-会触发人工审批（付费闸门，属预期行为，向用户说明即可，不要因此中止）。
+会触发人工审批（付费闸门，属预期行为）：**不要先用聊天消息问"是否放行"**——审批由界面上的
+Approve/Reject 按钮承载，你只需一句话说明"这次是付费调用、会弹审批"，然后**直接发起**。
+用户点 Reject 才算拒绝；在此之前不要停下来等回复。
 推荐流程：先用 portfolio-check 刷新持仓快照（异常就停下来转述，不要继续），
 必要时用 stock-scan / csv-analyze 补充市场数据，再调用 pse-review(provider='deepseek')
 跑完整 PSE 多智能体复盘（重算数据 → Planner/Specialist/Evaluator + 知识库检索 → 保存周报），

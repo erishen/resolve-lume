@@ -623,6 +623,16 @@ function buildTasks() {
   return tasks
 }
 
+// Session -> task id, recorded when a chat starts. The task id is part of the
+// incoming /api/chat body but is dropped when chatBody.js builds the agent
+// payload, so a tool call later cannot recover it from the stream meta alone.
+const sessionTasks = new Map()
+function noteSessionTask(sessionId, taskId) {
+  if (!sessionId || !taskId) return
+  sessionTasks.set(String(sessionId), String(taskId))
+  if (sessionTasks.size > 500) sessionTasks.delete(sessionTasks.keys().next().value)
+}
+
 // Resolve a task by id (or undefined when absent/empty).
 function getTask(id) {
   if (!id) return undefined
@@ -955,6 +965,7 @@ async function handle(req, res) {
     // Auto-narrow the task from the latest user message (studio parity) and
     // decorate the prompt with the exact-name tool catalog.
     const task = taskForChat(body)
+    noteSessionTask(String(body.sessionId || ''), task && task.id)
     const agentBody = buildAgentChatBody(body, task, await getToolCatalogText(task && task.includeTools))
     // The UI toggle picks the route: /react/api/pse always runs the three-role
     // orchestrator, /react/api/chat is the single ReAct agent (the container
@@ -995,6 +1006,20 @@ async function handle(req, res) {
     const callSession = typeof toolArgs._lume_session === 'string' ? toolArgs._lume_session : ''
     if (Object.prototype.hasOwnProperty.call(toolArgs, '_lume_session')) {
       delete toolArgs._lume_session
+    }
+    // deep-review promises the paid DeepSeek pipeline, but the model may omit
+    // provider and silently fall back to the free default (observed live: it
+    // called pse-review({}) and produced a free-tier report). Fill the default
+    // from the chat's task id so the card's contract holds.
+    if (toolName === 'pse-review' && !toolArgs.provider && callSession) {
+      const chatTask =
+        sessionTasks.get(callSession) ||
+        progress.taskIdForSession(callSession) ||
+        (matchTaskByMessage(progress.chatUserMessageForSession(callSession), buildTasks()) || {}).id
+      if (chatTask === 'deep-review') {
+        toolArgs.provider = 'deepseek'
+        console.log('[sidecar] deep-review -> pse-review provider=deepseek')
+      }
     }
     if (builtin.BUILTIN_NAMES.has(toolName)) {
       // Called by the agent-httpd bridge (SIDECAR_TOOLS_URL), NOT by the UI.

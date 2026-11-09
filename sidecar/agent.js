@@ -306,6 +306,7 @@ async function proxySSE(req, res, method, incomingPath, bodyBuffer) {
   // decide whether a side-effecting parameter (publish=true) was authorized.
   let userMessage = ''
   let sessionId = ''
+  let taskId = ''
   if (isChatStream) {
     try {
       const parsed = JSON.parse(bodyBuffer.toString('utf8'))
@@ -313,10 +314,11 @@ async function proxySSE(req, res, method, incomingPath, bodyBuffer) {
       // sessionId is what agent-httpd echoes back on every tool call
       // ("_lume_session"), so storing it here makes stream lookup exact.
       sessionId = String(parsed.sessionId || '')
+      taskId = String(parsed.taskId || '')
     } catch { /* /api/pse may use a different shape; stay conservative */ }
   }
   const streamId = isChatStream
-    ? progress.registerChatStream(res, { userMessage, sessionId })
+    ? progress.registerChatStream(res, { userMessage, sessionId, taskId })
     : null
   const releaseStream = () => progress.unregisterChatStream(streamId)
   if (isChatStream) res.on('close', releaseStream)

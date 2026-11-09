@@ -58,8 +58,17 @@ function registerChatStream(res, meta = {}) {
     // Conversation id (agent-httpd echoes it on every tool call as
     // "_lume_session"), so a tool call can be routed to the exact stream.
     sessionId: String(meta.sessionId || ''),
+    // Which task card started this chat. Used to apply per-task tool defaults
+    // (e.g. deep-review's paid PSE provider) without a taskId on the tool call.
+    taskId: String(meta.taskId || ''),
   })
   return id
+}
+
+// Task id of the chat that owns this session ('' when unknown).
+function taskIdForSession(sessionId) {
+  const s = sessionId ? chatStreamForSession(sessionId) : null
+  return s ? s.taskId : ''
 }
 
 function unregisterChatStream(id) {
@@ -326,6 +335,7 @@ module.exports = {
   activeChatStreamIds,
   registerChatStream,
   unregisterChatStream,
+  taskIdForSession,
   activeChatStreamCount,
   activeChatUserMessage,
   latestChatUserMessage,
