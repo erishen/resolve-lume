@@ -50,6 +50,40 @@ const TASK_COPY = {
     description:
       '用 PSE 多智能体流水线（Planner / Specialist / Evaluator）做多视角评审，产出带证据与自检的结论。',
   },
+  // Ported from resolve-studio's registry so the task list matches 1:1.
+  devstats: {
+    name: '开发数据统计',
+    description:
+      '查掘金/思否文章阅读数据、汇总双平台传播对比、巡检各仓库 GitHub Actions CI 状态、导出仓库统计 CSV（dev-stats 项目）。',
+  },
+  foundation: {
+    name: '通用分析目录',
+    description:
+      '分析文件或代码目录的结构、内容与依赖，理解一个代码库/文件夹后再回答；提供系统信息与通用计算。',
+  },
+  privacy: {
+    name: '隐私与合规自查',
+    description:
+      '审计当前 repo 是否有隐私泄露（.gitignore 覆盖/硬编码密钥/历史提交敏感文件等 9 项检查），PDF 转 Markdown。',
+  },
+  documents: {
+    name: '文档与资料库检索',
+    description:
+      '在本地 markdown 文档库全文检索、查照片重复、批量 Word 转 Markdown，基于本地只读服务。',
+  },
+  recruiting: {
+    name: '简历与求职',
+    description: '定制简历、生成面试题、记录 CRM 求职任务。',
+  },
+  web: {
+    name: '联网调研',
+    description: '浏览网页、抓取并总结外部信息。',
+  },
+  'deep-review': {
+    name: '深度投资复盘',
+    description:
+      '用付费 DeepSeek 模型驱动 autogen-pse 多智能体团队（Planner/Specialist/Evaluator + 个人知识库检索）跑完整组合复盘流水线，生成深度周报；付费模型、会触发审批，适合周度正式复盘。',
+  },
   general: {
     name: '通用对话',
     description: '默认模式：单 agent 直接对话（不启用 PSE 三角色）。',

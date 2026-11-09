@@ -199,7 +199,7 @@ POST /api/tools/call (来自 agent 桥 SIDECAR_TOOLS_URL)
 
 | 护栏 | studio | lume 现状 |
 |---|---|---|
-| 工具面按最新用户消息自动收窄 | `tasks.resolve(taskId, messages)` | `sidecar/taskMatch.js` + `buildTasks()` 的 `triggers` 匹配；显式 `taskId` 优先（`server.js` 的 `taskForChat`），命中即打 `task auto-match -> <id>` 日志 |
+| 工具面按最新用户消息自动收窄 | `tasks.resolve(taskId, messages)` + 每个任务一份 `includeTools` | `sidecar/taskMatch.js` + `buildTasks()` 的 `triggers` 匹配；显式 `taskId` 优先（`server.js` 的 `taskForChat`），命中即打 `task auto-match -> <id>` 日志。任务带 `tools:` 白名单时，`chatBody.js` 把它塞进 chat body 的 `tools` 数组（agent-httpd 的 `tools_schema_json_filtered` 精确名过滤，上限 32），`getToolCatalogText(allowList)` 同步把提示词目录裁到同一批名字——否则模型读到 78 个名字、只能调 15 个 |
 | 声明式调用兜底 | `findDeclaredToolCall` + 有界续推 | `agent.c` 的 `nudges` 护栏：正文点名了已注册工具却没发 tool-call → 追加 user 修正消息，最多 2 次；`tools_mentioned()` 同时匹配 `sidecar__x` 与裸名 `x` |
 | 正文伪 tool-call 清洗 | `stripMalformedToolTags` | `agent.c` 的 `looks_like_tool_json()`：正文里出现 `"arguments"` / `"tool_calls"` / `"function"` 时按「工具调用写成了正文」续推；`tools.c` / `mcp.c` 的未知工具错误补 `(did you mean: …)` 候选 |
 | 空回复兜底 | `emptyReplyFallback` | 工具已执行但本轮无正文 → 续推「请用中文总结以上工具结果」，最多 2 次（与上条共用 `nudges` 预算） |
@@ -216,6 +216,14 @@ POST /api/tools/call (来自 agent 桥 SIDECAR_TOOLS_URL)
 模型把工具调用写成正文时，两层兜底：后端 `salvage_declared_call()` 解析出
 `name` + 平衡的 `arguments` 对象后直接派发（不再只靠催它重发），sidecar 收到无法
 解析的残片答案时替换成「模型把工具调用写成了正文」的说明，绝不把那截 JSON 当答复。
+
+任务目录也与 studio 对齐（2026-11-09）：`sidecar/taskCopy.js` 提供业务向中文名 + 一句话描述
+（studio `packages/core/src/plugins/tasks.ts` 的同一口径），`souls/` 只负责系统提示词；
+同时补齐 studio 有、lume 缺的 7 个任务（`devstats` / `foundation` / `privacy` / `documents` /
+`recruiting` / `web` / `deep-review`），每个 soul 的 `tools:` 用后端真实注册名
+（`sidecar__x` 或 `fs__x`），由 `sidecar/souls.test.js` 兜住拼写和 32 个上限。
+`/api/tasks/match` 与对话路径共用 `matchTaskByMessage`（命中数优先、再按关键词长度，
+避免“文章”这类泛词压过“评论/深度复盘”等更具体的意图）。
 
 工具面本身也做了裁剪：`MCP_ALLOW` 只能整台服务器开关，所以新增了 `MCP_TOOL_DENY`（agent-httpd `mcp_tool_denied()`，按注册名 `<serverId>__<toolName>` 精确匹配；sidecar `server.js` 用同一份 env 过滤从桥直连发现的工具）。默认砍掉 git 的 21 个写操作/会话态工具，只留 7 个只读的 `status/diff/log/show/blame/branch/remote`（它们都接受显式 `path`，不需要 `git_set_working_dir`）；写操作与切换工作目录仍可经 `shell` 在人工审批下执行。99 → 78。
 

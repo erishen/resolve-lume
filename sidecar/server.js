@@ -677,16 +677,23 @@ function backendTools() {
   })
 }
 
-async function getToolCatalogText() {
+// A task with a `tools:` allow-list pins the schemas the model sees, so the
+// prompt catalog must shrink with it — otherwise the model reads 78 names, can
+// only call 15, and keeps trying the rest ("the tool exists, why does it fail?").
+async function getToolCatalogText(allowList) {
   const now = Date.now()
-  if (catalogState.at && now - catalogState.at < CATALOG_TTL_MS) return catalogState.text
-  const tools = await backendTools()
-  const text = renderToolCatalog(tools)
-  if (text) {
+  const fresh = !catalogState.at || now - catalogState.at >= CATALOG_TTL_MS
+  if (fresh || !catalogState.tools) {
+    const tools = await backendTools()
+    catalogState.tools = tools
     catalogState.at = now
-    catalogState.text = text
+    catalogState.text = renderToolCatalog(tools)
   }
-  return text
+  if (Array.isArray(allowList) && allowList.length) {
+    const allowed = new Set(allowList)
+    return renderToolCatalog((catalogState.tools || []).filter((t) => allowed.has(t.name)))
+  }
+  return catalogState.text
 }
 
 // ---------- skills: scan souls dir for SOUL.md ----------
@@ -947,7 +954,8 @@ async function handle(req, res) {
     // run sees all 24 cross-domain tools with no task-level constraint.
     // Auto-narrow the task from the latest user message (studio parity) and
     // decorate the prompt with the exact-name tool catalog.
-    const agentBody = buildAgentChatBody(body, taskForChat(body), await getToolCatalogText())
+    const task = taskForChat(body)
+    const agentBody = buildAgentChatBody(body, task, await getToolCatalogText(task && task.includeTools))
     // The UI toggle picks the route: /react/api/pse always runs the three-role
     // orchestrator, /react/api/chat is the single ReAct agent (the container
     // runs with PSE_ENABLED=false so this route is genuinely non-PSE).
@@ -1130,23 +1138,10 @@ async function handle(req, res) {
   }
   if (p === '/api/tasks/match' && method === 'POST') {
     const body = await readBody(req)
-    const msg = (body.message || '').toLowerCase()
-    // Match against each task's id + triggers keywords (frontmatter `triggers:`);
-    // falls back to an id substring match for the meta tasks without triggers.
-    let best = null
-    let bestScore = 0
-    for (const t of buildTasks()) {
-      if (t.id === 'general') continue
-      let score = 0
-      if (msg.includes(t.id.replace(/-/g, ' '))) score += 1
-      for (const kw of (t.triggers || '').split(',').map((s) => s.trim()).filter(Boolean)) {
-        if (msg.includes(kw.toLowerCase())) score += 2
-      }
-      if (score > bestScore) {
-        bestScore = score
-        best = t
-      }
-    }
+    // One matcher for both callers: the live chat path (taskForChat) and this
+    // preview endpoint used to score differently, so the UI could preview a
+    // task the run never picked.
+    const best = matchTaskByMessage(body.message, buildTasks())
     return send(res, 200, { id: best ? best.id : null, name: best ? best.name : null })
   }
 

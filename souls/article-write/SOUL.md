@@ -1,6 +1,7 @@
 ---
 name: article-write
 description: 用 crewai-pse 三角色流水线（Planner/Specialist/Evaluator）为 projects.json 里的某一个项目生成中英双语技术文章，并自动落盘到文章目录。当用户说「写一篇技术文章」「生成 XX 项目的文章」「帮我把 alva-e2e 写成文章」时使用；若未指定项目，先列出候选让用户选一个。
+triggers: 文章, 写作, 博客, 技术文章, 稿子, 发布, wordpress, 双语, 中英, 草稿, 投稿, 写一篇
 ---
 
 # article-write 技能

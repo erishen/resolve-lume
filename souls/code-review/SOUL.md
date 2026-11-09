@@ -1,6 +1,7 @@
 ---
 name: code-review
 description: 审查代码文件并输出结构化审查报告（问题列表 + 严重度 + 建议）
+triggers: 审查代码, 代码审查, review, 代码质量, 检查代码
 ---
 
 # Code Review 技能

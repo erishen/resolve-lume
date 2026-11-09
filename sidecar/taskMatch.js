@@ -14,9 +14,16 @@ function matchTaskByMessage(message, tasks) {
       .split(/[,，]/)
       .map((w) => w.trim().toLowerCase())
       .filter(Boolean)
-    const hits = words.filter((w) => s.includes(w)).length
+    let hits = 0
+    let chars = 0
+    for (const w of words) {
+      if (!s.includes(w)) continue
+      hits += 1
+      chars += w.length // a longer keyword is the more specific signal
+    }
     if (!hits) continue
-    if (!best || hits > best.hits) best = { task: t, hits }
+    const score = hits * 100 + chars
+    if (!best || score > best.score) best = { task: t, score }
   }
   return best && best.task
 }

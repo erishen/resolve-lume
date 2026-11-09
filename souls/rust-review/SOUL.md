@@ -1,7 +1,7 @@
 ---
 name: rust-review
 description: 按 Rust 团队惯例审查代码质量
-triggers: review, 代码审查, 审查代码
+triggers: rust, 所有权, 借用检查, 生命周期, borrow, cargo
 ---
 
 对用户给出的 Rust 代码进行审查，按以下清单逐项检查并给出具体修改建议：
