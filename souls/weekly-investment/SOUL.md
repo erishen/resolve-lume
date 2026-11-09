@@ -2,6 +2,7 @@
 name: weekly-investment
 description: 生成本地投资组合周报。先调 portfolio-check 做数据体检（刷新并扫描异常），再调 pse-review 用 PSE 三角色流水线生成深度周报（组合概览 / 收益点评 / 风险警示 / 调仓建议）。适合回答「帮我看看这周投资情况」「生成投资周报」。
 triggers: 投资, 投资周报, 投资情况, 周报, portfolio, 持仓, 复盘, 投资组合
+tools: sidecar__read-file, sidecar__write-file, sidecar__shell, sidecar__skill-run, fs__read_text_file, fs__read_multiple_files, fs__write_file, fs__edit_file, fs__create_directory, fs__list_directory, fs__directory_tree, fs__search_files, fs__move_file, fs__get_file_info, sidecar__stock-scan, sidecar__csv-analyze, sidecar__product-analyze, sidecar__portfolio-check, sidecar__pse-review
 ---
 
 # 每周投资回顾（Weekly Investment）

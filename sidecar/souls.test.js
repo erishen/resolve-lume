@@ -73,11 +73,16 @@ test('every pinned tool name is a real registry name', () => {
   }
 })
 
-test('souls without a tool list stay open (all tools), as before', () => {
-  const byId = new Map(souls())
-  for (const id of ['article-write', 'hot-news-post', 'weekly-investment']) {
-    const fm = byId.get(id)
-    assert.ok(fm, `${id} missing`)
-    assert.ok(!fm.tools, `${id} should not pin tools yet`)
+test('every business soul pins tools; only PSE roles stay open', () => {
+  // Full tool surface (78 names) is where the model wanders off: it picks an
+  // unrelated heavy tool or invents a name. PSE role dirs are skipped by
+  // buildTasks() and never become task cards, so they keep the open surface.
+  const PSE_ROLES = new Set(['planner', 'specialist', 'evaluator'])
+  for (const [id, fm] of souls()) {
+    if (PSE_ROLES.has(id)) {
+      assert.ok(!fm.tools, `${id} is a PSE role and should not pin tools`)
+      continue
+    }
+    assert.ok(fm.tools, `${id} has no tools: line (task runs on the full surface)`)
   }
 })
