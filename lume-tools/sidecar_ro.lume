@@ -173,16 +173,52 @@ tool "crm-task", "One personal-CRM pipeline: task in [crm-qa|follow-up-draft|wee
   return sidecar_tool("crm-task", stringify(p));
 };
 
+tool "write-file", "Write text to a file (allowed roots only). req: path, content. Needs human approval; report the real path, never claim it wrote on failure.", {"path": "string", "content": "string", "task": "string"}, (p) => {
+  return sidecar_tool("write-file", stringify(p));
+};
+
+tool "shell", "Run ONE shell command (15s, 8KiB output cap). Human approval required on every call; quote the real output, never fake success or retry blindly.", {"command": "string"}, (p) => {
+  return sidecar_tool("shell", stringify(p));
+};
+
+tool "make", "Run make in a project dir. req: dir; optional target. Human approval required; report exit status verbatim, do not assume the target passed.", {"dir": "string", "target": "string", "args": "string"}, (p) => {
+  return sidecar_tool("make", stringify(p));
+};
+
+tool "browser-open", "Open a URL in the shared browser and screenshot it. Human approval required; describe what actually rendered, not what you expect.", {"url": "string"}, (p) => {
+  return sidecar_tool("browser-open", stringify(p));
+};
+
+tool "browser-screenshot", "Screenshot the current shared browser page. Human approval required; never guess page content from the URL alone.", {"url": "string"}, (p) => {
+  return sidecar_tool("browser-screenshot", stringify(p));
+};
+
+tool "article-archive", "Archive/reorganise finished article projects (local file moves). Human approval required; report exactly what moved.", {"project": "string", "confirm": "bool"}, (p) => {
+  return sidecar_tool("article-archive", stringify(p));
+};
+
+tool "hot-news-publish", "Publish a hot-news draft to its platform (EXTERNAL). Human approval required; only after an explicit user publish request.", {"platform": "string", "article": "string", "dry_run": "bool", "save_as_draft": "bool"}, (p) => {
+  return sidecar_tool("hot-news-publish", stringify(p));
+};
+
+tool "build-juejin", "Build a Juejin draft payload from an article (local, no upload). Human approval required; report the artifact path.", {}, (p) => {
+  return sidecar_tool("build-juejin", stringify(p));
+};
+
+tool "juejin-draft", "Save a Juejin DRAFT via platform API (external side effect). Human approval required; never call twice, never publish.", {}, (p) => {
+  return sidecar_tool("juejin-draft", stringify(p));
+};
+
+tool "juejin-publish", "PUBLISH an article to Juejin (external, irreversible). Human approval required; only after an explicit user publish request.", {}, (p) => {
+  return sidecar_tool("juejin-publish", stringify(p));
+};
+
+tool "wechat-draft", "Create a WeChat MP draft (external side effect). Human approval required; creates a draft only, does not push to followers.", {}, (p) => {
+  return sidecar_tool("wechat-draft", stringify(p));
+};
+
+tool "sf-pw-publish", "Publish to SegmentFault via Playwright (external, irreversible). Human approval required; explicit user request only.", {}, (p) => {
+  return sidecar_tool("sf-pw-publish", stringify(p));
+};
+
 // 未暴露的工具（needsApproval 标记不可信，见生成器注释；要加就改 --only 重生成）:
-//   write-file
-//   shell
-//   browser-open
-//   browser-screenshot
-//   build-juejin
-//   juejin-draft
-//   juejin-publish
-//   wechat-draft
-//   sf-pw-publish
-//   article-archive
-//   hot-news-publish
-//   make

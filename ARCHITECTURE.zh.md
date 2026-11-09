@@ -126,6 +126,12 @@ flowchart LR
 >
 > 长任务超时（同轮）：sidecar 桥的出站调用是 `.lume` 的 `http_post`，而 lume-core 对 `timeout` 有硬封顶（`builtins_http.c` 的 `HTTP_MAX_TIMEOUT_MS`，原 600s）。`pse-review` 实测 7–12 min，桥会在 600s 先 abort 并回 502，而报告其实已经写盘——agent 于是误报「失败」。现在桥超时设 **870s**（小于 agent-httpd 的 `MCP_CALL_TIMEOUT` 900s，让桥先失败并给出可读错误，而不是 C 侧静默杀调用），并把 lume-core 封顶放宽到 **1200s**。`lume-core/` 与 `agent-httpd/` 一样是 vendored 目录（不入库、`make vendor` 会覆盖），所以该改动由 `scripts/patch_vendored_sources.sh` 幂等打回，并挂进 `make build` / `vendor` / `bootstrap`。
 >
+> 高危工具与人工审批门（2026-11-09，第二批）：用户要求「都开放」，参照 `resolve-studio` 的处理方式。studio 的口径是 **工具全部对模型可见，靠 `Tool.needsApproval` + `ApprovalService` 阻塞等人点 Approve**（`DEFAULT_TIMEOUT=60_000`，超时按拒绝；拒绝后循环收到 `User rejected the tool call`）。lume 的 C 循环没有这条链（`mcp.c` 的 `approval` 只打日志），所以门做在 sidecar：`sidecar/approval.js` 在 `/api/tools/call` 命中 gated 工具时，把 `approval-request` 帧写进**最新**的活跃 chat SSE（前端 `ToolCallCard.tsx` 本来就有 Approve/Reject UI 与 `/api/approval`），阻塞等 `POST /api/approval` 回传决定；60s 超时、无活跃会话、用户点 Reject 一律按拒绝，工具不执行。**面板 `/api/tool/run` 不走门**（人工主动操作，与 studio 一致）。
+>
+> gated 集合 = schema `needsApproval`（shell / make / hot-news-publish）+ 补充清单（write-file、browser-open/screenshot、article-archive/publish、build-juejin、juejin-draft/publish、wechat-draft、sf-pw-publish）；`pse-review` 的 schema 标记来自 studio 的付费档，lume 侧改由 `hasExplicitPaidIntent` 管，不额外弹窗。桥面最终 43/43 全暴露，backend 注册 99 项；`/api/tools` 会把 gated 工具标 `needsApproval`，面板与卡片因此显示 ⚠ 与审批按钮。
+>
+> 审批门实测：真实 chat SSE 触发 `shell` → 收到 `event: approval-request` → `POST /api/approval {approve}` 返回 `applied:true` → 命令执行、输出回到对话；`reject` 路径不执行命令；无活跃会话时 `/api/tools/call` 直接回 tool error（fail closed）。单测 `sidecar/approval.test.js` 覆盖五条：无流拒绝、发帧、approve、reject、超时。
+>
 > 端到端验证（2026-11-09，均经 backend `/react/api/tools/call`）：`sidecar__portfolio-check` 200（快照刷到 14:17）、`sidecar__pse-review` 200（257s，返回报告正文 + 绝对路径）、`sidecar__pse-review-latest` 200（取回最近周报）、`sidecar__csv-analyze` 200（83s，样例 CSV 出 HTML 报告）；带 `provider=deepseek` 且无付费意图的调用被闸门拒绝。
 
 ### 3.5 peer / A2A 面 —— tsm-hub 作为只读能力节点

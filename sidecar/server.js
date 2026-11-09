@@ -30,8 +30,15 @@ const agent = require('./agent')
 const builtin = require('./builtin-exec')
 const H = require('./business-helpers')
 const progress = require('./progress')
+const approval = require('./approval')
 const toolGuard = require('./toolGuard')
 const { buildAgentChatBody, hasExplicitPublishIntent, hasExplicitPaidIntent } = require('./chatBody')
+
+// Human-approval set lives in builtin-exec (single source of truth, shared with
+// the security test). resolve-studio parity: tools stay visible; each gated
+// call blocks on a human Approve (60s timeout = reject, no live chat = reject).
+const GATED = builtin.APPROVAL_GATED_NAMES
+
 const { isSensitivePath, tokenMatches, MAX_PREVIEW_BYTES } = require('./security')
 
 // Guard against a stray PORT=0 / non-numeric value in the environment: Node
@@ -491,7 +498,9 @@ function handleToolsList(res) {
             description: t.description || '',
             server: t.server || 'builtin',
             parameters: t.parameters || {},
-            needsApproval: !!t.needsApproval,
+            // pse-review's schema flag is studio's paid-tier legacy; here it is
+            // covered by hasExplicitPaidIntent, so do not advertise a gate.
+            needsApproval: GATED.has(t.name) || (!!t.needsApproval && t.name !== 'pse-review'),
             fromMcp: false,
           })
         }
@@ -955,6 +964,25 @@ async function handle(req, res) {
       // treats a JSON `error` field as a protocol failure and can drop the
       // explanation from the model's context.
       if (dup) return send(res, 200, { name: toolName, result: dup })
+      // Human-in-the-loop gate (resolve-studio parity, 2026-11-09). Runs after
+      // the cheap refusals above so a rejected-payload call never prompts.
+      if (GATED.has(toolName)) {
+        const ap = await approval.request(toolName, toolArgs)
+        console.log(`[approval-gate] tool=${toolName} decision=${ap.decision} reason=${ap.reason || '-'} pending=${approval.pendingCount()}`)
+        if (ap.decision !== 'approve') {
+          const why = ap.reason === 'timeout'
+            ? `用户 ${Math.round(approval.TIMEOUT_MS / 1000)} 秒内没有批准（超时按拒绝处理）`
+            : ap.reason === 'user'
+              ? '用户在审批弹窗里点了 Reject'
+              : '当前没有活跃的对话流可以弹出审批（命令行/面板外的调用一律拒绝）'
+          return send(res, 200, {
+            name: toolName,
+            result:
+              `tool error: ${toolName} 需要人工批准后才可执行，${why}，已拒绝。` +
+              '请在对话里向用户说明要做什么并等其点击 Approve；不要换参数绕过，也不要声称已经执行。',
+          })
+        }
+      }
       // Conversational tool calls are a single blocking JSON POST — the C agent
       // emits no SSE frame while it waits. The chat SSE response is still open,
       // though, so mirror the child process log into that stream (see
@@ -1204,14 +1232,17 @@ async function handle(req, res) {
     if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(callId)) {
       return send(res, 400, { error: 'invalid callId' })
     }
-    // agent-httpd currently emits no approval-request frames, so there is no
-    // pending gate to release. Say so instead of silently pretending that a
-    // human decision changed anything; keep an audit trail for when it does.
-    console.log(`[sidecar] approval recorded (no active gate): ${callId} ${decision}`)
-    return send(res, 200, {
-      ok: true, applied: false, callId, decision,
-      note: 'current lume runtime has no gated tools; decision recorded, nothing was unblocked',
-    })
+    // Resolve the gate opened by approval.js when /api/tools/call hit a gated
+    // tool (shell / make / write-file / browser / publish ...). The agent's tool
+    // HTTP request is still blocked waiting on that promise, so a decision here
+    // really releases (or refuses) it. Unknown ids are recorded but not applied
+    // (late clicks after the 60s timeout), never silently pretend.
+    const applied = approval.resolve(callId, decision)
+    console.log(`[sidecar] approval ${applied ? 'applied' : 'no active gate'}: ${callId} ${decision} pending=${approval.pendingCount()}`)
+    return send(res, 200, applied
+      ? { ok: true, applied: true, callId, decision }
+      : { ok: true, applied: false, callId, decision,
+        note: 'no pending gate for this callId (already decided or timed out); nothing was unblocked' })
   }
 
   // ---- jobs ----

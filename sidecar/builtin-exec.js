@@ -37,6 +37,24 @@ try {
   ALL_SCHEMAS = []
 }
 const ALL_SCHEMA_NAMES = new Set(ALL_SCHEMAS.map((t) => t.name))
+// Schema-level approval flag (mirrors resolve-studio's Tool.needsApproval).
+// shell / make / hot-news-publish carry it today; server.js unions this with
+// its own GATED_EXTRA list before prompting a human.
+const GATED_SCHEMA_NAMES = ALL_SCHEMAS.filter((t) => t.needsApproval === true).map((t) => t.name)
+// Tools whose side effects the schema predates: arbitrary profile writes,
+// shared browser state, local file moves, external drafts/publishes. They must
+// not run without a human clicking Approve (server.js consults this set).
+const GATED_EXTRA = new Set([
+  'write-file', 'browser-open', 'browser-screenshot', 'article-archive',
+  'article-publish', 'juejin-draft', 'juejin-publish', 'wechat-draft',
+  'sf-pw-publish', 'build-juejin',
+])
+// pse-review keeps needsApproval in the schema (studio gated its paid tier);
+// here the paid tier has hasExplicitPaidIntent and the free tier is read-only,
+// so prompting for every weekly review would be pure noise.
+const APPROVAL_GATED_NAMES = new Set(
+  [...GATED_EXTRA, ...GATED_SCHEMA_NAMES].filter((n) => n !== 'pse-review'),
+)
 
 // ---- path safety ----
 // Symlinks are resolved before the containment check: a link placed inside an
@@ -668,5 +686,5 @@ function capabilities() {
   ].join('\n')
 }
 
-module.exports = { BUILTIN_TOOLS, BUILTIN_NAMES, ALL_SCHEMA_NAMES, AGENT_TOOL_ALLOW,
+module.exports = { BUILTIN_TOOLS, BUILTIN_NAMES, ALL_SCHEMA_NAMES, GATED_SCHEMA_NAMES, APPROVAL_GATED_NAMES, AGENT_TOOL_ALLOW,
                    executeBuiltinTool, normalizeToolError, normalizeArgs, capabilities }

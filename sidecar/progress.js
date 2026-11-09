@@ -106,6 +106,32 @@ function broadcastToActiveChat(text) {
   }
 }
 
+function approvalRequestFrame(call) {
+  return `event: approval-request\ndata: ${JSON.stringify({ call })}\n\n`
+}
+
+/**
+ * Push an approval prompt to the NEWEST chat stream. Returns false when no
+ * stream can receive it (caller then fails closed instead of running a
+ * side-effecting tool unattended). Mirrors latestChatUserMessage()'s single
+ * newest-stream correlation rule.
+ */
+function sendApprovalRequest(call) {
+  if (streams.size === 0) return false
+  let latest = null
+  for (const s of streams.values()) {
+    if (!latest || s.id > latest.id) latest = s
+  }
+  const res = latest && latest.res
+  if (!res || res.writableEnded || res.destroyed) return false
+  try {
+    res.write(approvalRequestFrame(call))
+    return true
+  } catch {
+    return false
+  }
+}
+
 // ---- AsyncLocalStorage plumbing ------------------------------------------
 function currentEmit() {
   return als.getStore() || null
@@ -233,6 +259,8 @@ function createProgressPublisher(sink, toolName, opts = {}) {
 
 module.exports = {
   reasoningFrame,
+  approvalRequestFrame,
+  sendApprovalRequest,
   registerChatStream,
   unregisterChatStream,
   activeChatStreamCount,

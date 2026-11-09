@@ -63,6 +63,15 @@ const DEFAULT_ALLOW = [
   'capabilities',
   'portfolio-check', 'pse-review', 'pse-review-latest',
   'csv-analyze', 'product-analyze', 'crm-task',
+  // 2026-11-09 第二批：剩余 12 个高危工具全部挂上（用户要求「都开放」，
+  // 参照 resolve-studio：工具全可见，靠 needsApproval + 人工审批门兜底）。
+  // lume 侧的审批门在 sidecar/approval.js：/api/tools/call 收到 gated 工具
+  // 时把 approval-request 推进活跃 chat SSE，等用户点 Approve；60s 超时或
+  // 无活跃会话一律按拒绝（fail closed）。面板 /api/tool/run 是人工主动操作，
+  // 不过门。
+  'write-file', 'shell', 'make', 'browser-open', 'browser-screenshot',
+  'article-archive', 'hot-news-publish', 'build-juejin', 'juejin-draft',
+  'juejin-publish', 'wechat-draft', 'sf-pw-publish',
 ]
 
 const args = process.argv.slice(2)
@@ -118,6 +127,32 @@ function cutBytes(s, max) {
 // 全部丢失。这正是「模型绕去读文件→误判能力不存在」的同源根因，不能只给
 // article-write 打补丁。下面每条都把关键约束放在最前，且 ≤148B。
 const DESC_OVERRIDE = {
+  // 2026-11-09 高危工具（人工审批门兜底）：描述里先写「需要批准」和「不要
+  // 假装成功」，避免 148B 截断把约束吃掉。
+  'write-file':
+    'Write text to a file (allowed roots only). req: path, content. Needs human approval; report the real path, never claim it wrote on failure.',
+  'shell':
+    'Run ONE shell command (15s, 8KiB output cap). Human approval required on every call; quote the real output, never fake success or retry blindly.',
+  'make':
+    'Run make in a project dir. req: dir; optional target. Human approval required; report exit status verbatim, do not assume the target passed.',
+  'browser-open':
+    'Open a URL in the shared browser and screenshot it. Human approval required; describe what actually rendered, not what you expect.',
+  'browser-screenshot':
+    'Screenshot the current shared browser page. Human approval required; never guess page content from the URL alone.',
+  'article-archive':
+    'Archive/reorganise finished article projects (local file moves). Human approval required; report exactly what moved.',
+  'build-juejin':
+    'Build a Juejin draft payload from an article (local, no upload). Human approval required; report the artifact path.',
+  'juejin-draft':
+    'Save a Juejin DRAFT via platform API (external side effect). Human approval required; never call twice, never publish.',
+  'juejin-publish':
+    'PUBLISH an article to Juejin (external, irreversible). Human approval required; only after an explicit user publish request.',
+  'wechat-draft':
+    'Create a WeChat MP draft (external side effect). Human approval required; creates a draft only, does not push to followers.',
+  'sf-pw-publish':
+    'Publish to SegmentFault via Playwright (external, irreversible). Human approval required; explicit user request only.',
+  'hot-news-publish':
+    'Publish a hot-news draft to its platform (EXTERNAL). Human approval required; only after an explicit user publish request.',
   'capabilities':
     'Ask FIRST for publish/make/shell/PSE-review or "is X available": lists ALL tools and which are exposed to you. NEVER claim a capability is missing.',
   'article-write':

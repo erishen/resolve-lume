@@ -82,19 +82,20 @@ test('preview cap is bounded', () => {
 // The allowlist is the server-side enforcement for /api/tools/call. If the
 // generated bridge is missing, every agent tool would be denied: catch that
 // here instead of discovering it from a silent 403 in production.
-test('agent tool allowlist is generated and excludes high-risk tools', () => {
+test('agent tool allowlist is generated and high-risk tools are approval-gated', () => {
   const B = require('./builtin-exec')
   assert.ok(B.AGENT_TOOL_ALLOW.size >= 20, 'run `make tools-lume` to regenerate the bridge')
   for (const n of ['article-write', 'article-publish', 'capabilities', 'read-file']) {
     assert.ok(B.AGENT_TOOL_ALLOW.has(n), `${n} should be exposed to the agent`)
   }
-  // article-publish IS on the bridge since 2026-11-06, but confirm=true (the
-  // real WordPress publish) is gated server-side in server.js by
-  // hasExplicitPublishIntent — omit-confirm calls stay read-only (list/preview).
-  // shell / write-file / hot-news-publish remain fully unreachable.
-  for (const n of ['shell', 'write-file', 'hot-news-publish']) {
+  // 2026-11-09: the allowlist no longer hides risky tools (resolve-studio parity:
+  // every tool is visible, a human must approve each gated call). What must hold
+  // instead is that the risky ones are behind sidecar/approval.js, and that the
+  // publish gate still refuses confirm=true without explicit user intent.
+  for (const n of ['shell', 'write-file', 'make', 'hot-news-publish', 'juejin-publish']) {
     if (B.BUILTIN_NAMES.has(n)) {
-      assert.ok(!B.AGENT_TOOL_ALLOW.has(n), `${n} must NOT be reachable from /api/tools/call`)
+      assert.ok(B.AGENT_TOOL_ALLOW.has(n), `${n} should be visible to the agent`)
+      assert.ok(B.APPROVAL_GATED_NAMES.has(n), `${n} must be approval-gated, not freely executable`)
     }
   }
 })
