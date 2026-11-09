@@ -217,6 +217,17 @@ POST /api/tools/call (来自 agent 桥 SIDECAR_TOOLS_URL)
 `name` + 平衡的 `arguments` 对象后直接派发（不再只靠催它重发），sidecar 收到无法
 解析的残片答案时替换成「模型把工具调用写成了正文」的说明，绝不把那截 JSON 当答复。
 
+网关还会在**工具调用本身**上直接拒绝：参数不符合该工具的 JSON Schema（实测把
+`sidecar__analyze-dir` 的 `ignore` 从数组写成字符串），或模型臆造了不在 `tools`
+数组里的名字（实测叫出不存在的 `side-items`）。这类 400 一到，agent-httpd 直接
+收尾，用户只得到一句「本次运行未完成」，8 轮预算一秒没用上。`sidecar/agent.js`
+现在对 `/api/chat` 做一次**一次性 schema 修复重试**：识别该错误 → 丢掉这次尝试
+的 done 帧 → 在消息末尾追加一条 system 修复提示（说明被拒原因、要求只调
+`tools` 里存在的名字、参数严格按 Schema）→ 用同一份 tools 重发一次；重试只在
+**本轮还没有任何工具执行过**时触发，绝不会重放 `shell` / 发布 / 写文件这类已成功
+的副作用。`sidecar/schemaRepair.test.js` 用假上游覆盖了三条边界：修复成功、
+第二次仍拒绝不无限重试、已有工具执行则拒绝重放。
+
 任务目录也与 studio 对齐（2026-11-09）：`sidecar/taskCopy.js` 提供业务向中文名 + 一句话描述
 （studio `packages/core/src/plugins/tasks.ts` 的同一口径），`souls/` 只负责系统提示词；
 同时补齐 studio 有、lume 缺的 7 个任务（`devstats` / `foundation` / `privacy` / `documents` /

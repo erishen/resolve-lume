@@ -187,6 +187,35 @@ function translateFrame(json, buf) {
   return `event: reasoning\ndata: ${JSON.stringify({ text: JSON.stringify(json) })}\n\n`
 }
 
+// A free-tier model sometimes emits a tool call whose arguments miss the tool's
+// JSON Schema (e.g. `ignore` as a string where the schema wants an array), or
+// invents a name that is not in the `tools` array. The gateway rejects the call
+// before the agent loop can run it, so the round dies at once and the user sees
+// "本次运行未完成" with zero work done. Re-issuing the same conversation with a
+// repair note recovers those runs without replaying any tool (we only retry
+// when nothing has executed yet).
+const TOOLCALL_REJECTED = /tool call validation failed|not in request\.tools|did not match schema/i
+
+const SCHEMA_REPAIR_NOTE = (err) =>
+  `上一轮工具调用被上游校验拒绝：${String(err || '').slice(0, 300)}。`
+  + '请只调用 tools 数组里存在的工具，不要臆造工具名；参数必须严格符合该工具的 JSON Schema'
+  + '（类型、必填项、枚举都要对上）。不确定某个工具怎么用时，改用参数更简单的只读工具，'
+  + '或用最少步骤直接回答。'
+
+// Append (not replace) a repair message so the retry keeps the full history and
+// the same tools array — only the instruction changes.
+function withSchemaRepair(bodyBuffer, err) {
+  let body
+  try {
+    body = JSON.parse(bodyBuffer.toString('utf8'))
+  } catch {
+    return bodyBuffer
+  }
+  const note = { role: 'system', content: SCHEMA_REPAIR_NOTE(err) }
+  body.messages = Array.isArray(body.messages) ? body.messages.concat(note) : [note]
+  return Buffer.from(JSON.stringify(body))
+}
+
 // Proxy a chat/pse request, translating the SSE stream.
 async function proxySSE(req, res, method, incomingPath, bodyBuffer) {
   const backendPath = agentPath(incomingPath)
@@ -273,51 +302,126 @@ async function proxySSE(req, res, method, incomingPath, bodyBuffer) {
     : null
   const releaseStream = () => progress.unregisterChatStream(streamId)
   if (isChatStream) res.on('close', releaseStream)
+
   // text: full delta stream (kept for callers that inspect it);
   // pending: only the text since the last tool/phase boundary (answer candidate).
   const buf = {
     text: '', pending: '', answer: '', error: '', suppress: false,
     tools: [], roundMax: 0, lastError: '',
   }
-  let pending = ''
-  resp.setEncoding('utf8')
-  resp.on('data', (chunk) => {
-    pending += chunk
-    let idx
-    while ((idx = pending.indexOf('\n\n')) !== -1) {
-      const frame = pending.slice(0, idx)
-      pending = pending.slice(idx + 2)
-      // agent-httpd frames look like `data: {...}` (possibly multiple `data:` lines)
-      const dataLine = frame.split('\n').find((l) => l.startsWith('data:'))
-      if (!dataLine) continue
-      let json
-      try {
-        json = JSON.parse(dataLine.slice(5).trim())
-      } catch {
-        continue
-      }
-      res.write(translateFrame(json, buf))
-    }
-  })
-  resp.on('end', () => {
-    if (pending.trim()) {
-      const dataLine = pending.split('\n').find((l) => l.startsWith('data:'))
-      if (dataLine) {
-        try {
-          const json = JSON.parse(dataLine.slice(5).trim())
-          res.write(translateFrame(json, buf))
-        } catch {
-          /* ignore */
+  // One repair retry, only for /api/chat, and only while no tool has run: a
+  // retry replays the whole conversation, so it must never re-execute a side
+  // effect (publish, write, shell command) that already succeeded.
+  const allowSchemaRepair = incomingPath === '/api/chat'
+  let repaired = false
+
+  function startAttempt(body) {
+    backendRequest(method, backendPath, body)
+      .then((r) => {
+        if (r.statusCode !== 200) {
+          const chunks = []
+          r.on('data', (c) => chunks.push(c))
+          r.on('end', () => {
+            let msg = `upstream ${r.statusCode}`
+            try {
+              const j = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+              msg = String(j.error || j.message || msg)
+            } catch { /* keep the status text */ }
+            res.write(`event: error\ndata: ${JSON.stringify({ message: msg })}\n\n`)
+            releaseStream()
+            res.end()
+          })
+          r.on('error', () => { releaseStream(); res.end() })
+          return
+        }
+        pipeAttempt(r)
+      })
+      .catch(() => {
+        res.write(`event: error\ndata: ${JSON.stringify({ message: 'agent-httpd unreachable during retry' })}\n\n`)
+        releaseStream()
+        res.end()
+      })
+  }
+
+  function pipeAttempt(attemptResp) {
+    let pending = ''
+    let repairPlanned = false
+    attemptResp.setEncoding('utf8')
+    const handleFrame = (json) => {
+      if (json.t === 'error') {
+        const msg = String(json.d || '')
+        const canRepair = allowSchemaRepair && !repaired
+          && (buf.tools || []).length === 0
+          && TOOLCALL_REJECTED.test(msg)
+        if (canRepair) {
+          repaired = true
+          repairPlanned = true
+          // Keep the exact rejection text: the repair note quotes it so the
+          // model knows which parameter it got wrong.
+          buf.lastRepairError = msg
+          res.write(
+            `event: reasoning\ndata: ${JSON.stringify({
+              text: `工具调用参数不符合 schema，正在自动重试一次（${msg.slice(0, 160)}）`,
+            })}\n\n`,
+          )
+          return
         }
       }
+      // The retry attempt decides the answer; drop the dead attempt's
+      // synthesized "本次运行未完成" done frame so it never reaches the UI.
+      if (repairPlanned && json.t === 'done') return
+      res.write(translateFrame(json, buf))
     }
-    releaseStream()
-    res.end()
-  })
-  resp.on('error', () => {
-    releaseStream()
-    res.end()
-  })
+    attemptResp.on('data', (chunk) => {
+      pending += chunk
+      let idx
+      while ((idx = pending.indexOf('\n\n')) !== -1) {
+        const frame = pending.slice(0, idx)
+        pending = pending.slice(idx + 2)
+        // agent-httpd frames look like `data: {...}` (possibly multiple `data:` lines)
+        const dataLine = frame.split('\n').find((l) => l.startsWith('data:'))
+        if (!dataLine) continue
+        let json
+        try {
+          json = JSON.parse(dataLine.slice(5).trim())
+        } catch {
+          continue
+        }
+        handleFrame(json)
+      }
+    })
+    attemptResp.on('end', () => {
+      if (pending.trim()) {
+        const dataLine = pending.split('\n').find((l) => l.startsWith('data:'))
+        if (dataLine) {
+          try {
+            handleFrame(JSON.parse(dataLine.slice(5).trim()))
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+      if (repairPlanned) {
+        const err = buf.lastRepairError || buf.error
+        // Reset the answer buffers but keep the tool trace: the second attempt
+        // is the one whose text becomes `done.answer`.
+        buf.text = ''
+        buf.pending = ''
+        buf.answer = ''
+        buf.error = ''
+        buf.suppress = false
+        startAttempt(withSchemaRepair(bodyBuffer, err))
+        return
+      }
+      releaseStream()
+      res.end()
+    })
+    attemptResp.on('error', () => { releaseStream(); res.end() })
+  }
+
+  // Reuse the response already fetched above; a fresh request here would
+  // double the upstream call for every chat turn.
+  pipeAttempt(resp)
 }
 
 // Proxy a plain JSON request (tools list / tools/call) and echo the JSON.
@@ -354,4 +458,7 @@ function normalizeTools(payload) {
   }
 }
 
-module.exports = { proxySSE, proxyJSON, normalizeTools, agentPath, translateFrame, looksLikeToolCallText }
+module.exports = {
+  proxySSE, proxyJSON, normalizeTools, agentPath, translateFrame, looksLikeToolCallText,
+  withSchemaRepair, SCHEMA_REPAIR_NOTE, TOOLCALL_REJECTED,
+}

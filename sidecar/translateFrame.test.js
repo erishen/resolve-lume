@@ -150,6 +150,43 @@ const cases = [
   },
 ]
 
+// Schema-repair retry: when the gateway rejects a malformed tool call before
+// any tool executes, agent.js re-issues the turn once with a repair message
+// instead of ending the run as "本次运行未完成".
+const { withSchemaRepair, TOOLCALL_REJECTED, SCHEMA_REPAIR_NOTE } = require('./agent')
+
+function testSchemaRepair() {
+  const body = Buffer.from(JSON.stringify({
+    messages: [{ role: 'user', content: '审查这个文件' }],
+    tools: ['sidecar__read-file', 'sidecar__shell'],
+    model: 'chat',
+  }))
+  const fixed = JSON.parse(withSchemaRepair(body, 'parameters for tool x did not match schema').toString('utf8'))
+  const checks = [
+    ['keeps the original message', fixed.messages[0].content === '审查这个文件'],
+    ['appends exactly one repair message', fixed.messages.length === 2 && fixed.messages[1].role === 'system'],
+    ['repair note states the rejection', fixed.messages[1].content.includes('did not match schema')],
+    ['tools array untouched', JSON.stringify(fixed.tools) === JSON.stringify(['sidecar__read-file', 'sidecar__shell'])],
+    ['other fields preserved', fixed.model === 'chat'],
+  ]
+  const broken = Buffer.from('<html>not json</html>')
+  checks.push(['unparsable body passes through untouched', withSchemaRepair(broken, 'x').equals(broken)])
+
+  const detected = [
+    "tool call validation failed: parameters for tool sidecar__analyze-dir did not match schema",
+    "attempted to call tool 'side-items' which was not in request.tools",
+  ].map((m) => TOOLCALL_REJECTED.test(m))
+  checks.push(['detects both observed gateway rejections', detected.every(Boolean)])
+  checks.push(['note tells the model not to invent tools', SCHEMA_REPAIR_NOTE('x').includes('不要臆造工具名')])
+
+  let failed = 0
+  for (const [name, ok] of checks) {
+    if (!ok) failed++
+    console.log(`${ok ? 'PASS' : 'FAIL'}  schema-repair: ${name}`)
+  }
+  return failed
+}
+
 let failed = 0
 for (const c of cases) {
   const answer = replay(c.frames)
@@ -164,5 +201,7 @@ for (const c of cases) {
     if (leaked.length) console.log(`      leaked: ${leaked.join(', ')}`)
   }
 }
-console.log(`\n${cases.length - failed}/${cases.length} passed`)
+const repairFailed = testSchemaRepair()
+failed += repairFailed
+console.log(`\n${cases.length + (repairFailed === 0 ? 7 : 7)} checks, ${failed} failed`)
 process.exit(failed ? 1 : 0)
