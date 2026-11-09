@@ -195,7 +195,7 @@ POST /api/tools/call (来自 agent 桥 SIDECAR_TOOLS_URL)
 
 ### 4.5 工具面可读性：紧凑目录 / 任务自动匹配 / 循环护栏
 
-99 个工具全暴露 + `.lume` 桥 148 B 描述上限，会让小模型在名字相近的工具间靠猜：同一句「用 shell 执行 echo」，有的会话正确调 `sidecar__shell`，有的编造 `execute_code`，有的把 `"arguments": {...}` 当正文吐出来。resolve-studio 不出这个问题不是模型更强（两边默认都走 `chat` 别名，网关实际落到 qwen3.8-27b），而是多了四层护栏；lume 目前已补齐三层，第四层（描述长度）受 C 结构体约束：
+工具全暴露（最初 99 个，现 78 个）+ 单工具描述只有一句话，会让小模型在名字相近的工具间靠猜：同一句「用 shell 执行 echo」，有的会话正确调 `sidecar__shell`，有的编造 `execute_code`，有的把 `"arguments": {...}` 当正文吐出来。resolve-studio 不出这个问题不是模型更强（两边默认都走 `chat` 别名，网关实际落到 qwen3.8-27b），而是多了四层护栏；lume 已补齐四层，并把工具面从 99 收到 80：
 
 | 护栏 | studio | lume 现状 |
 |---|---|---|
@@ -203,10 +203,17 @@ POST /api/tools/call (来自 agent 桥 SIDECAR_TOOLS_URL)
 | 声明式调用兜底 | `findDeclaredToolCall` + 有界续推 | `agent.c` 的 `nudges` 护栏：正文点名了已注册工具却没发 tool-call → 追加 user 修正消息，最多 2 次；`tools_mentioned()` 同时匹配 `sidecar__x` 与裸名 `x` |
 | 正文伪 tool-call 清洗 | `stripMalformedToolTags` | `agent.c` 的 `looks_like_tool_json()`：正文里出现 `"arguments"` / `"tool_calls"` / `"function"` 时按「工具调用写成了正文」续推；`tools.c` / `mcp.c` 的未知工具错误补 `(did you mean: …)` 候选 |
 | 空回复兜底 | `emptyReplyFallback` | 工具已执行但本轮无正文 → 续推「请用中文总结以上工具结果」，最多 2 次（与上条共用 `nudges` 预算） |
-| 完整工具描述 | 完整 `description` | `lume-core` 的 `ToolRec.desc` 已由补丁从 160B 放宽到 1024B（生成侧限 900B），高危/易混工具的描述写足「用 A 不要用 B」;另外仍用 `sidecar/toolCatalog.js` 的紧凑目录（99 条 ≈ 2.6 KB）兜住「名字相近」这一层 |
+| 完整工具描述 | 完整 `description` | `lume-core` 的 `ToolRec.desc` 已由补丁从 160B 放宽到 1024B（生成侧限 900B），高危/易混工具的描述写足「用 A 不要用 B」；另用 `sidecar/toolCatalog.js` 的紧凑目录（78 条 ≈ 2.0 KB）兜住「名字相近」这一层 |
 | — | — | `RoundState.spoken`（4 KiB 上限）留存本轮正文，供上述护栏判定；`round_free()` 负责释放 |
 
 目录每 60 s 缓存一次（`getToolCatalogText` → 后端 `/react/api/tools`），chat 轮次只多一次本地 GET；后端不可达时退化为不注入（不阻塞对话）。三处 C 护栏由 `deploy/patch_agent_httpd_guards.py` 幂等维持；`scripts/patch_vendored_sources.sh` 现在有四个互相独立的补丁段（lume-core 超时、session stamp、循环护栏、lume-core 工具描述上限），任一「已打」都不会跳过其余。
+
+会话戳只打在 `sidecar` 这台上（`MCP_SESSION_STAMP_SERVERS`，默认 `sidecar`）：
+`_lume_session` 是塞进 args 的私有键，只有 sidecar 桥会剥掉它；git/fs/memory 这些
+严格校验 schema 的 MCP server 会把「不认识的参数」当错误返回，模型于是拿同一份 args
+再重试（实测连打 6 次 `git_status` 直到 8 轮预算耗尽）。
+
+工具面本身也做了裁剪：`MCP_ALLOW` 只能整台服务器开关，所以新增了 `MCP_TOOL_DENY`（agent-httpd `mcp_tool_denied()`，按注册名 `<serverId>__<toolName>` 精确匹配；sidecar `server.js` 用同一份 env 过滤从桥直连发现的工具）。默认砍掉 git 的 21 个写操作/会话态工具，只留 7 个只读的 `status/diff/log/show/blame/branch/remote`（它们都接受显式 `path`，不需要 `git_set_working_dir`）；写操作与切换工作目录仍可经 `shell` 在人工审批下执行。99 → 78。
 
 --- 
 

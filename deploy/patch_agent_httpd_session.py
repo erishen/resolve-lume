@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stamp the chat's sessionId onto every MCP tool call (vendored agent-httpd).
+"""Stamp the chat's sessionId onto sidecar MCP tool calls (vendored agent-httpd).
 
 agent-httpd/ is vendored and gitignored, so this patch is applied by
 scripts/patch_vendored_sources.sh before every build. It is idempotent: if the
@@ -60,9 +60,29 @@ static char *mcp_args_with_session(const char *args_json, const char *sid) {
     return out;
 }
 
+/* Which servers accept the session stamp. Only the sidecar bridge strips
+ * "_lume_session" before executing the tool; the npx/HTTP MCP bridges (git, fs,
+ * memory, ...) validate their own schemas strictly and reject the unknown key,
+ * which turned a healthy call into a "unrecognized parameter _lume_session"
+ * retry loop. Override with MCP_SESSION_STAMP_SERVERS="sidecar,other". */
+static int mcp_session_stamp_server(const char *server_id) {
+    const char *list = getenv("MCP_SESSION_STAMP_SERVERS");
+    if (!list) list = "sidecar";
+    if (!list[0] || !server_id || !server_id[0]) return 0;
+    char buf[256];
+    set_str(buf, sizeof buf, list);
+    for (char *tok = strtok(buf, ","); tok; tok = strtok(NULL, ",")) {
+        while (*tok == ' ' || *tok == '\t') tok++;
+        char *e = tok + strlen(tok);
+        while (e > tok && (e[-1] == ' ' || e[-1] == '\t')) *--e = '\0';
+        if (*tok && strcmp(tok, server_id) == 0) return 1;
+    }
+    return 0;
+}
+
 static void mcp_tool_runner(void *data, const char *args_json,
                             const char *session_id, sbuf *result) {
-    char *aug;'''
+    char *aug = NULL;'''
 
 OLD_CALL = r'''        sb_str(result, "error: internal mcp tool index out of range");
         return;
@@ -73,7 +93,8 @@ OLD_CALL = r'''        sb_str(result, "error: internal mcp tool index out of ran
 NEW_CALL = r'''        sb_str(result, "error: internal mcp tool index out of range");
         return;
     }
-    aug = mcp_args_with_session(args_json, session_id);
+    if (session_id && mcp_session_stamp_server(g_tools[idx].server_id))
+        aug = mcp_args_with_session(args_json, session_id);
     mcp_call(g_tools[idx].mcp_name, aug ? aug : args_json, result);
     free(aug);
 }'''
@@ -81,8 +102,8 @@ NEW_CALL = r'''        sb_str(result, "error: internal mcp tool index out of ran
 
 def main(path):
     s = open(path, encoding='utf-8').read()
-    if MARKER in s:
-        print(f'[patch] {path}: session stamp already present')
+    if MARKER in s and 'mcp_session_stamp_server' in s:
+        print(f'[patch] {path}: session stamp already present (scoped to sidecar)')
         return 0
     for old, new, label in ((OLD_RUNNER, NEW_RUNNER, 'runner signature'),
                             (OLD_CALL, NEW_CALL, 'dispatch call')):

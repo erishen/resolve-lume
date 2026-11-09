@@ -70,3 +70,13 @@ if [ -d "$LC" ]; then
 else
   echo "[patch] 跳过：$LC 不存在（先 make vendor）"
 fi
+
+# ---- 5) agent-httpd: MCP 单工具 deny 名单（MCP_TOOL_DENY） --------------------
+# MCP_ALLOW 只能整台服务器开关；git 那台注册 28 个工具，agent 只需要 9 个
+# （status/diff/log/show/blame/branch/remote/add/commit）。其余注册进来只是
+# 让模型多 19 个相近名字可猜，副作用型能力本来也走 shell + 人工审批。
+if [ -d "$AH" ]; then
+  python3 "$ROOT/deploy/patch_agent_httpd_mcp_tool_filter.py" "$AH"
+else
+  echo "[patch] 跳过：$AH 不存在（先 make vendor）"
+fi

@@ -41,6 +41,24 @@ const { matchTaskByMessage } = require('./taskMatch')
 // call blocks on a human Approve (60s timeout = reject, no live chat = reject).
 const GATED = builtin.APPROVAL_GATED_NAMES
 
+// Per-tool MCP deny list, mirroring agent-httpd's MCP_TOOL_DENY (same env value,
+// comma-separated `serverId__toolName`). The backend already stops registering
+// these, but handleToolsList also folds in tools discovered straight from the
+// HTTP bridges, so the panel and any client-side catalog would otherwise still
+// advertise them. Tools are matched both as `id__tool` and `id:tool`.
+const MCP_TOOL_DENY = new Set(
+  String(process.env.MCP_TOOL_DENY || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+)
+function mcpToolDenied(serverId, tool) {
+  if (!MCP_TOOL_DENY.size) return false
+  return (
+    MCP_TOOL_DENY.has(`${serverId}__${tool}`) || MCP_TOOL_DENY.has(`${serverId}:${tool}`)
+  )
+}
+
 const { isSensitivePath, tokenMatches, MAX_PREVIEW_BYTES } = require('./security')
 
 // Guard against a stray PORT=0 / non-numeric value in the environment: Node
@@ -482,6 +500,7 @@ function handleToolsList(res) {
           if (s.transport !== 'http' || !s.tools || !s.tools.length) continue
           const details = s.toolDetails || {}
           for (const tool of s.tools) {
+            if (mcpToolDenied(s.id, tool)) continue
             const backendName = `${s.id}__${tool}`
             if (seen.has(backendName)) continue
             merged.push({
