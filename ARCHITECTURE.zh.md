@@ -113,8 +113,20 @@ flowchart LR
 >
 > 网络前提：`mcp-*` 容器在外部网络 `tsm-hub_default` 上，backend 必须同时加入 `default` 与 `tsm-hub_default` 才能解析这些主机名。前端面板（sidecar 读 `deploy/mcp-servers.json`）跑在宿主上、解析不到容器名，故其状态以后端真实注册的工具快照为准。
 >
-> 容器归属：**五座 MCP 桥全部在 tsm-hub 的 docker-compose.yml 里**（`container_name` 固定、`restart: unless-stopped`、node TCP 健康检查）：`fs`/`memory`/`think` 原本就在，`fetch`/`git` 于 2026-11-09 从 resolve-lume 收归，lume 仓不再定义任何 MCP 容器（原 `deploy/mcp-bridges.compose.yml` 已删除），避免两仓 `docker compose up` 撞容器名。镜像与依赖也一并收归 tsm-hub：`deploy/mcp-bridge.Dockerfile`、`deploy/mcp-git.Dockerfile`（均 `FROM node:20-alpine`，镜像 186MB / 200MB），依赖统一挂 `tsm-hub/mcp/node_modules`（lume 侧 vendored 副本已删，省 ~85MB）。`mcp-fs` / `mcp-git` 对工作区是 `:rw`（lume 要能写文件、git 要能 add/commit），`mcp-git` 用 `GIT_AUTHOR_*` / `GIT_COMMITTER_*` 注入提交身份，否则容器内 `git_commit` 报 "Author identity unknown"。lume 侧 `make mcp-bridges-up/-down/-logs` 已改为转发到 tsm-hub 的同名服务。
-> 网关替换（2026-11-09）：`mcp-fetch` / `mcp-think` 已从 supergateway 换成自研 C 网关 `mcp-gateway`（源码与 Dockerfile 在 `tsm-hub/deploy/`），镜像 186MB→136MB，且容器里少了一个 node 进程（fetch 62→17MiB、think 116→35MiB anon）。并行模型：每条 HTTP 连接一个线程、一个 `mcp-session-id` 一个子进程、会话内按内部 id 混流收发；已知边界：最多 4 个会话（满了淘汰最久未用的空闲会话）、空闲 30 分钟回收、`GET /mcp` 的 SSE 下行流未实现（回 405）。五个 `mcp-*` 已全部切换：`fs`/`memory`/`fetch`/`think` 用 `mcp-gateway:latest`（136MB），`git` 用 `mcp-gateway-git:latest`（150MB）；`mcp-bridge`/`mcp-bridge-git`（186/200MB）仅留作回滚镜像。稳态内存（cgroup anon，跑过工具后）由约 684MiB 降到约 371MiB，少的是每容器那层 supergateway 的 node 进程。
+> 容器归属：**五座 MCP 桥全部在 tsm-hub 的 docker-compose.yml 里**（`container_name` 固定、`restart: unless-stopped`、node TCP 健康检查）：`fs`/`memory`/`think` 原本就在，`fetch`/`git` 于 2026-11-09 从 resolve-lume 收归，lume 仓不再定义任何 MCP 容器（原 `deploy/mcp-bridges.compose.yml` 已删除），避免两仓 `docker compose up` 撞容器名。镜像与依赖也一并收归 tsm-hub：`deploy/mcp-bridge.Dockerfile`、`deploy/mcp-git.Dockerfile`（均 `FROM node:20-alpine`，构建产物 186MB / 200MB；2026-11-09 已作为回滚重建源保留，回滚镜像本身已删除），依赖统一挂 `tsm-hub/mcp/node_modules`（lume 侧 vendored 副本已删，省 ~85MB）。`mcp-fs` / `mcp-git` 对工作区是 `:rw`（lume 要能写文件、git 要能 add/commit），`mcp-git` 用 `GIT_AUTHOR_*` / `GIT_COMMITTER_*` 注入提交身份，否则容器内 `git_commit` 报 "Author identity unknown"。lume 侧 `make mcp-bridges-up/-down/-logs` 已改为转发到 tsm-hub 的同名服务。
+> 网关替换（2026-11-09）：`mcp-fetch` / `mcp-think` 已从 supergateway 换成自研 C 网关 `mcp-gateway`（源码与 Dockerfile 在 `tsm-hub/deploy/`），镜像 186MB→136MB，且容器里少了一个 node 进程（fetch 62→17MiB、think 116→35MiB anon）。并行模型：每条 HTTP 连接一个线程、一个 `mcp-session-id` 一个子进程、会话内按内部 id 混流收发；已知边界：最多 4 个会话（满了淘汰最久未用的空闲会话）、空闲 30 分钟回收、`GET /mcp` 的 SSE 下行流未实现（回 405）。五个 `mcp-*` 已全部切换：`fs`/`memory`/`fetch`/`think` 用 `mcp-gateway:latest`（136MB），`git` 用 `mcp-gateway-git:latest`（150MB）；回滚镜像 `mcp-bridge:latest` / `mcp-bridge-git:latest`（186/200MB）已于同日 `docker rmi` 回收 386MB，需要回滚时用上述 Dockerfile 重建。稳态内存（cgroup anon，跑过工具后）由约 684MiB 降到约 371MiB，少的是每容器那层 supergateway 的 node 进程。
+
+### 3.5 peer / A2A 面 —— tsm-hub 作为只读能力节点
+
+tsm-hub 侧新增了 A2A 面（`/.well-known/agent-card.json`、`/a2a`，以及需要签名的 `/peer/health`、`/peer/invoke`、`/peer/relay`），把「工具/技能/MCP/用量/provider 健康」以只读 capability 暴露给 lume 侧 agent。两侧端点：lume peer `127.0.0.1:18114`（节点名 `resolve-lume`）、tsm-hub `127.0.0.1:19070`（节点名 `tsm-hub`）。
+
+签名走 derived 模式：`key_for(node)=hmac_sha256(PEER_ROOT,"peer:"+node)`，待签名串为 `node + "\n" + ts + "\n" + nonce + "\n" + scope`，GET 的 scope 为 `GET <path>`（不含 query）、POST 为 `POST <path> + "\n" + body`，query 参数 `node/ts/nonce/sig`，时间窗默认 120s；两侧 `PEER_ROOT` 必须同值（本项目两侧均为同一 16 字符根密钥）。
+
+> 注册表是这套机制最容易漏的一环，且**两边都要登记对方的实际节点名**：tsm-hub 的 `data/peers-identity.json` 要含 `resolve-lume`（不是历史别名 `lume-a2a`），lume 的 `.data/peers-identity.json` 要含 `tsm-hub`（或在 `PEER_REG_DIR` 自注册目录放 `tsm-hub.json`）。缺任一边即单向不通，报错固定为 `unknown peer '<name>' (not in registry)` —— 看到它先核节点名，别去核密钥。
+>
+> 生效方式不同：lume 的 `known()` 每次请求重读注册表（改完即生效）；tsm-hub 启动时加载，改完要 `docker compose restart tsm-hub`。
+
+实测（2026-11-09）：未签名 `/peer/health` → `missing auth params`；以 `resolve-lume` 身份签 tsm-hub → `ok:true, mode:"derived"`；以 `tsm-hub` 身份签 lume → `ok:true`（双向通）；编造节点 `rogue` → `unknown peer`；`POST /a2a` 带 `params.metadata.capability=tsm.overview` → `completed` 并回 artifact（不带 capability 只回 `input-required`）；`/peer/relay` → 410；`/api/admin/a2a/overview`、`/tasks` 需 `X-Admin-Token`，200 正常。
 
 ---
 
