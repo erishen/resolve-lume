@@ -222,6 +222,14 @@ agent-httpd 的 API 与 resolve-studio 的 `/api/*` **不同**：
   sidecar。若最终仍无正文，`agent.js` 的 `done` 会输出工具轨迹（连续重复折叠成
   `hot-news ×4`）+ 轮数 + 最后错误，不再只甩一句「请重试」。
   校验：`chatBody.test.js`(6) / `toolGuard.test.js`(7) / `translateFrame.test.js`(7)。
+- **最后一轮留给结论**：`AGENT_MAX_ROUNDS`（默认 8，`1..30`，请求体 `rounds` 可逐次覆盖）
+  跑到最后一轮时不再下发工具 schema，并在已执行过工具时插入一条「预算已用完，直接给
+  结论」的 in-band 提示；这一轮模型若仍吐 tool_call 会被丢弃（`final round: tool_call
+  ignored`）。此前预算耗尽就直接结束循环，模型一路调工具就会得到空正文（11-10 实录：
+  discover → validate ×3 → shell ×6 → build-juejin，最后「本轮没有产生回答」）。
+  C 侧改动在 `deploy/patch_agent_httpd_final_round.py`，由 `scripts/patch_vendored_sources.sh`
+  第 8 步在 `make build` 前重打；校验用请求体 `rounds:1` + 一次工具调用：改前工具执行完
+  正文 delta 为 0，改后同一请求产出正文。
 - **发布必须用户显式授权**：`article-write(publish=true)` 只在「当前聊天消息」里明确
   写出发布 / 上线 / publish 时才放行（活跃流在 `progress.js` 里携带 userMessage）；
   用户只回清单编号时 `/api/tools/call` 直接拒绝。`publish.py` 的确认门在非交互环境

@@ -21,6 +21,8 @@
 #   6) agent-httpd：MCP 单工具 deny 名单（MCP_TOOL_DENY），git 那台只留 9 个。
 #   7) agent-httpd agent.c：超时报错带上实际预算 LLM_TIMEOUT（"upstream timeout
 #      (120s)"），秒数与 curl --max-time 同源，便于区分「模型慢」和「网关坏」。
+#   8) agent-httpd agent.c：最后一轮留给答案——预算耗尽时不再带工具 schema，
+#      模型一直调工具也不会以「本轮没有产生回答」收场（2026-11-10 实录）。
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -102,6 +104,8 @@ fi
 # 「网关坏了」。改成 "upstream timeout (120s)"，秒数与 curl --max-time 同源。
 if [ -f "$ROOT/agent-httpd/src/agent/agent.c" ]; then
   python3 "$ROOT/deploy/patch_agent_httpd_timeout_message.py" \
+    "$ROOT/agent-httpd/src/agent/agent.c"
+  python3 "$ROOT/deploy/patch_agent_httpd_final_round.py" \
     "$ROOT/agent-httpd/src/agent/agent.c"
 else
   echo "[patch] 跳过：agent-httpd/src/agent/agent.c 不存在（先 make vendor）"
