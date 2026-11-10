@@ -74,5 +74,87 @@ test('nothing to show stays Untitled', () => {
   assert.equal(sessionTitle({ messages: [{ role: 'assistant', content: '好' }] }, tasks), 'Untitled')
 })
 
+// A session that archived an article used to read "技术文章写作与发布" (the soul the
+// opening message matches), which says nothing about what actually happened. The
+// tool calls are recorded on the assistant messages, so derive from them instead.
+const archiveMessages = [
+  { role: 'user', content: '帮我归档一篇文章，重建各平台副本并更新关键词索引。' },
+  {
+    role: 'assistant',
+    content: '要归档哪一篇？',
+    toolCalls: [{ name: 'article-archive', arguments: { confirm: true } }],
+  },
+  { role: 'user', content: '7' },
+  {
+    role: 'assistant',
+    content: '已归档 resolve-lume',
+    toolCalls: [{ name: 'article-archive', arguments: { project: '7', confirm: true } }],
+  },
+]
+
+test('the tool that actually ran names the session, not the broad task', () => {
+  const rec = { taskMode: 'auto', title: '帮我归档一篇文章', messages: archiveMessages }
+  assert.equal(sessionTitle(rec, tasks), '归档文章')
+})
+
+test('article-write alone reads as 撰写文章 instead of the soul title', () => {
+  const rec = {
+    taskMode: 'auto',
+    title: '帮我写一篇关于 Lume 的文章',
+    messages: [
+      { role: 'user', content: '帮我写一篇关于 Lume 的文章' },
+      { role: 'assistant', content: '好', toolCalls: [{ name: 'article-write', arguments: { project: 'resolve-lume' } }] },
+    ],
+  }
+  assert.equal(sessionTitle(rec, tasks), '撰写文章 · resolve-lume')
+})
+
+test('a positional number from the call never becomes the subject', () => {
+  const rec = {
+    taskMode: 'auto',
+    title: '帮我归档一篇文章',
+    messages: [
+      {
+        role: 'assistant',
+        content: '已归档',
+        toolCalls: [{ name: 'article-archive', arguments: { project: '7', confirm: true } }],
+      },
+    ],
+  }
+  assert.equal(sessionTitle(rec, tasks), '归档文章')
+})
+
+test('the last real action wins when a session moves on to publishing', () => {
+  const rec = {
+    taskMode: 'auto',
+    title: '帮我写并发布文章',
+    messages: [
+      {
+        role: 'assistant',
+        content: '写好了',
+        toolCalls: [{ name: 'article-write', arguments: { project: 'resolve-lume' } }],
+      },
+      {
+        role: 'assistant',
+        content: '发布了',
+        toolCalls: [{ name: 'article-publish', arguments: { project: 'resolve-lume' } }],
+      },
+    ],
+  }
+  assert.equal(sessionTitle(rec, tasks), '发布文章 · resolve-lume')
+})
+
+test('read-only tools do not retitle a session', () => {
+  const rec = {
+    taskMode: 'auto',
+    title: longPrompt,
+    messages: [
+      { role: 'user', content: longPrompt },
+      { role: 'assistant', content: '查了', toolCalls: [{ name: 'read-file', arguments: { path: '/a' } }] },
+    ],
+  }
+  assert.equal(sessionTitle(rec, tasks), '投资分析')
+})
+
 console.log(`\ntitle: ${passed}/${passed + failed} passed`)
 if (failed) process.exit(1)
