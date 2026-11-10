@@ -119,6 +119,36 @@ test('read-only shell commands skip the prompt; anything that can write still as
   }
 })
 
+test('read-only make targets run unattended; build/restart/publish targets ask', () => {
+  const B = require('./builtin-exec')
+  const dir = 'work/harness/resolve-lume'
+  for (const target of ['check', 'test-gateway', 'frontend-test', 'shell-vars-check', 'sidecar-syntax-check', 'tools-lume-check', 'logs']) {
+    assert.equal(B.needsApproval('make', { dir, target }), false, `should run unattended: make ${target}`)
+  }
+  for (const target of ['build', 'up', 'deploy', 'down', 'sync-enums', 'sidecar-autostart-restart', 'frontend-up']) {
+    assert.equal(B.needsApproval('make', { dir, target }), true, `should ask: make ${target}`)
+  }
+  assert.equal(B.needsApproval('make', { dir, target: 'check', extraArgs: 'ARGS=run.py' }), true, 'extra args can change what a target does')
+  assert.equal(B.needsApproval('make', { dir, target: '' }), true, 'no target runs the default goal')
+
+  // The model often reaches a target through shell instead of the make tool;
+  // the same verification goals must not prompt there either.
+  const shellMake = [
+    'make -C ' + dir + ' shell-vars-check',
+    'make --no-print-directory -C . check',
+  ]
+  for (const command of shellMake) {
+    assert.equal(B.needsApproval('shell', { command }), false, `should run unattended: ${command}`)
+  }
+  const shellMakeGated = [
+    'make', 'make build', 'make -C . up', 'make -C . sync-enums',
+    'make -C . check ARGS=run.py', 'make -j4 check',
+  ]
+  for (const command of shellMakeGated) {
+    assert.equal(B.needsApproval('shell', { command }), true, `should ask: ${command}`)
+  }
+})
+
 test('concurrent chats: prompt goes to the stream of the calling session', async () => {
   const a = fakeStream()
   const b = fakeStream()

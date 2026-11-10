@@ -406,8 +406,12 @@ make sidecar-autostart-restart              # launchd 模式
   以及 `git status|diff|log|show|rev-parse|ls-files|blame|describe|shortlog`，前提是命令里
   没有 `; | & > < $ 反引号` 与换行。写危险项仍拦：`find -delete`/`-exec` 等写标记、
   `.env`（`.env.example` 除外）/`.ssh`/`id_rsa`/`.pem` 等凭据路径、以及一切不在白名单的
-  程序（`mkdir`/`rm`/`sort -o`/`sudo`）。校验：`make check` 里的 `sidecar/approval.test.js`
-  （11 例，含 15 条该跑与 15 条该拦的命令清单）。
+  程序（`mkdir`/`rm`/`sort -o`/`sudo`）。`make` 工具同理：只有 `check`/`test-gateway`/
+  `frontend-test`/`shell-vars-check`/`sidecar-syntax-check`/`tools-lume-check`/`logs` 等
+  验证目标免审（且不许带 `extraArgs`），`build`/`up`/`down`/`sync-enums`/重启类仍拦；
+  通过 shell 写的 `make -C dir check` 也按同一份目标清单放行，`-j4`/`-f`/`VAR=…` 一律拦。
+  校验：`make check` 里的 `sidecar/approval.test.js`
+  （12 例，含 15 条该跑与 15 条该拦的命令清单、以及 make 目标正反两列）。
 - **导出脱敏**：会话 Markdown / 单条复制 / JSON / job 诊断日志统一走 `export.ts` 的
   `exportText()` —— 绝对路径剥掉系统前缀与账户名后只留末 3 段（短路径也不带用户名）、
   `sk-` / `ghp_` / `Bearer` 等凭据形态掩码、单段文本截断 3000 字。之前只有 `jobToLog`

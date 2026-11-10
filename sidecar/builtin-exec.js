@@ -121,6 +121,11 @@ function isReadOnlyShell(args) {
     // position 1 counts; anything else stays gated.
     return GIT_READ_SUBCOMMANDS.has(tokens[1] || '')
   }
+  // `make -C dir check` reached through shell is the same verification goal as
+  // the make tool, and the model reaches for shell far more often. Only the
+  // harmless flags are tolerated; `-j4`, `-f`, `VAR=…` and every unknown flag
+  // stay gated because they can retarget or alter the recipe.
+  if (prog === 'make') return shellMakeIsVerification(tokens.slice(1))
   if (!READ_ONLY_PROGRAMS.has(prog)) return false
   for (const t of tokens.slice(1)) {
     const name = t.split('=')[0]
@@ -129,10 +134,47 @@ function isReadOnlyShell(args) {
   return true
 }
 
+// Verification goals only: they read sources and run tests. Anything that
+// builds images, rewrites tracked files (`sync-enums`), starts/stops services
+// or runs the default goal stays gated — an agent turn must not rebuild the
+// stack just because it wanted to see whether tests pass.
+const READ_ONLY_MAKE_TARGETS = new Set([
+  'check', 'test-gateway', 'frontend-test', 'shell-vars-check',
+  'sidecar-syntax-check', 'tools-lume-check', 'logs', 'sidecar-host-status',
+  'sidecar-autostart-status',
+])
+
+function isReadOnlyMake(args) {
+  const a = args || {}
+  // `make check ARGS=…` is still a read-only recipe, but a free-form token can
+  // redirect a target's recipe, so only the bare target is admitted.
+  if (String(a.extraArgs || '').trim()) return false
+  return READ_ONLY_MAKE_TARGETS.has(String(a.target || '').trim())
+}
+
+/** True when the shell-wrapped `make` argv targets only a verification goal. */
+function shellMakeIsVerification(argv) {
+  const rest = []
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]
+    if (a === '-C' || a === '--directory') {
+      i++ // directory token; `-C` without one leaves argv empty -> gated below
+      continue
+    }
+    if (a === '--no-print-directory' || a === '--no-print') continue
+    if (a.startsWith('-')) return false // -j4 / -f / -n can retarget the run
+    rest.push(a)
+  }
+  if (rest.length !== 1) return false
+  if (rest[0].includes('=')) return false
+  return READ_ONLY_MAKE_TARGETS.has(rest[0])
+}
+
 function needsApproval(name, args) {
   if (name === 'pse-review') return false
   // Read-only analysis scripts: stats.py under the souls tree only.
   if (name === 'shell' && isReadOnlyShell(args)) return false
+  if (name === 'make' && isReadOnlyMake(args)) return false
   if (GATED_SCHEMA_NAMES.includes(name)) return true
   const rule = APPROVAL_RULES.get(name)
   return rule ? !!rule(args || {}) : false
