@@ -103,8 +103,10 @@ const CREWAI_DISCOVER_MAX_OUTPUT = 64 * 1024
 
 const CREWAI_TASKS = {
   'article-validate': { label: '校验文章', target: 'validate', preValidate: false },
-  'article-publish': { label: '发布文章', target: 'publish', preValidate: true },
-  'article-archive': { label: '归档文章', target: 'archive', preValidate: false },
+  // 写操作标记 mutates：归档会把文章移出 articles/pse/zh、发布会把文章标记成已发布，
+  // 候选集合本身会变，位置编号随之失效 —— 这两类只认项目名（见下方数字分支）。
+  'article-publish': { label: '发布文章', target: 'publish', preValidate: true, mutates: true },
+  'article-archive': { label: '归档文章', target: 'archive', preValidate: false, mutates: true },
 }
 
 function crewaiPseDir() {
@@ -144,8 +146,9 @@ function loadArticleKeys() {
       // 目录不存在/不可读：仅用 json 队列
     }
   }
-  // 保持 projects.json 的插入顺序：编号 1..N 与 article-discover /
-  // article-write 的清单完全一致；额外文章按字母序追加在末尾。
+  // projects.json 的插入顺序在前，extra 文章按字母序追加在末尾。注意这份集合是活的：
+  // 归档会把文章移出 articles/pse/zh，后面的编号随即前移 —— 所以编号只用于展示，
+  // 写操作（archive / publish）必须传项目名，见 runCrewaiPublishTask 的数字分支。
   return [...keys]
 }
 
@@ -168,8 +171,21 @@ async function runCrewaiPublishTask(name, def, args) {
   const projectKeys = loadArticleKeys()
 
   // 数字编号选择（1-based）：用户/agent 回 "4" → projectKeys[3]。
+  // 写操作例外：编号是「此刻列表的第 N 项」，而归档/发布会改变这个集合本身。
+  // 2026-11-10 实测：并行发 7 与 8，7 归档后 pse/zh 少一篇，8 就报
+  // 「超出范围（1-7）」；若 8 后面还有项目，这个 8 会静默落到别的项目上
+  //（归档错文章且不报错）。所以写操作只认项目名，数字交回调用方自己翻译。
   let project = rawProject
-  if (project && /^\d+$/.test(String(project).trim())) {
+  const asIndex = project != null && /^\d+$/.test(String(project).trim())
+  if (asIndex && def.mutates) {
+    return (
+      `error: ${name} 不接受编号选择。本工具的候选编号会随归档/发布而前移，` +
+      `同一个「${String(project).trim()}」在不同时刻指向不同项目，可能归档错文章。\n` +
+      `请按你上次呈现给用户的那份清单，把编号翻成项目名再传（project=<项目名>）。\n` +
+      `当前可用项目名：${projectKeys.join(', ')}`
+    )
+  }
+  if (asIndex) {
     const idx = parseInt(String(project).trim(), 10) - 1
     if (idx >= 0 && idx < projectKeys.length) project = projectKeys[idx]
     else return `error: 编号 ${project} 超出范围（1-${projectKeys.length}）`
@@ -181,9 +197,11 @@ async function runCrewaiPublishTask(name, def, args) {
       return 'error: no projects configured in crewai-pse projects.json.'
     }
     return (
-      `(清单模式：未指定 project) 可用项目见本工具的 project 枚举（crewai-pse projects.json 的 key），也可直接传列表中的编号：\n` +
+      `(清单模式：未指定 project) 可用项目如下 —— 编号只供人阅读，${name} 不接受编号：\n` +
       projectKeys.map((k, i) => `${i + 1}. ${k}`).join('\n') +
-      `\n\n要预览并执行某篇，请再次调用本工具并带 \`project=<项目名 或 编号>\`（如 project="resolve-studio" 或 project="4"）；本工具默认只预览不执行，确认执行需另带 confirm=true。`
+      `\n\n要预览并执行某篇，请再次调用本工具并带 \`project=<项目名>\`（如 project="resolve-studio"）；` +
+      `用户回数字时，按上面这份清单把数字翻成项目名再传，不要把编号透传给工具。` +
+      `本工具默认只预览不执行，确认执行需另带 confirm=true。`
     )
   }
 
