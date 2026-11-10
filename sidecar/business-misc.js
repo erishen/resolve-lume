@@ -11,6 +11,7 @@ const path = require('path')
 const H = require('./business-helpers')
 const { isSafeMakeVarValue } = require('./security')
 const { buildTrafficDigest } = require('./devstats-digest')
+const { parseStatsCsv } = require('./stats-csv')
 
 // 把整句检索词拆成可单独检索的项：空白 + 中文连接词（的/和/与/及/或）都算分隔，
 // 丢掉单字项（命中噪音太大）。用于严格匹配 0 命中时的放宽。
@@ -840,44 +841,3 @@ function cleanDevStatsOutput(raw) {
 }
 
 /** Parse manifest-level stats.csv (name + traffic columns) without a dep. */
-function parseStatsCsv(csvPath) {
-  let raw
-  try {
-    raw = fs.readFileSync(csvPath, 'utf8')
-  } catch {
-    return []
-  }
-  const rows = []
-  let fields = []
-  let cur = []
-  let inQ = false
-  let field = ''
-  const flushField = () => {
-    cur.push(field)
-    field = ''
-  }
-  const flushRow = () => {
-    if (cur.length === 0) return
-    if (!fields.length) fields = cur
-    else rows.push(cur)
-    cur = []
-  }
-  for (const ch of raw) {
-    if (inQ) {
-      if (ch === '"') inQ = false
-      else field += ch
-    } else if (ch === '"') {
-      inQ = true
-    } else if (ch === ',') {
-      flushField()
-    } else if (ch === '\n' || ch === '\r') {
-      flushField()
-      flushRow()
-    } else {
-      field += ch
-    }
-  }
-  flushField()
-  flushRow()
-  return rows.map((r) => Object.fromEntries(fields.map((f, i) => [f, r[i] || ''])))
-}
