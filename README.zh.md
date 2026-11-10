@@ -170,8 +170,14 @@ npm run dev   # :5173
 - **不在本仓镜像里**：`Dockerfile.backend` 没有也没有必要有 Xvfb/websockify；
   backend 只管 `agent-httpd`。桌面挂了先看 `docker ps | grep browser-desk`，
   再 `curl -s http://127.0.0.1:16082/vnc.html | head -1` 确认 noVNC 本身还活着。
-- **仍为占位**：`/api/desktop-login*`（「打开并登录」的自动化登录）未接 browser-desk
-  的登录中心，返回 `桌面登录在此镜像中未启用`；`SF_LOGIN_ENABLED=1` 之前不会显示入口。
+- **「打开并登录」已接真实桌面**：`GET /api/desktop-login?url=…` 把校验过的 http/https
+  网址用 CDP（`CDP_URL`，默认 `http://127.0.0.1:10023`）推进 desk 的新标签页并置前，
+  页面里点完滑块/2FA 即可；`/api/desktop-login/sites` 透出 browser-desk 登录中心
+  （`DESK_LOGIN_HUB_URL`，默认 `http://127.0.0.1:18088`）的站点清单。
+  非 http(s)（`javascript:`/`file:`/`data:`）一律拒绝 —— 这台浏览器持有真实登录态。
+- **desk 是共享浏览器**：微信草稿、Xianyu、思否共用同一批标签页，所以桌面 tab 会先显示
+  上一个任务留下的页面。思否相关流程用 `SF_LOGIN_ENABLED=1` + `SF_LOGIN_URL`
+  （默认 `https://segmentfault.com/user/login`，同时是输入框默认值）一键打开思否登录页。
 
 两条链路都设了 `timeout/proxyTimeout = 0`，分钟级 SSE 长任务不会被掐断。
 **前提**：宿主 launcher + sidecar 已在跑（`make sidecar-host-start`）；frontend / backend

@@ -73,6 +73,11 @@ const whitelist = [
   // external accounts / browser
   'ERISHEN_BASE',
   'CDP_URL',
+  // 桌面 tab：browser-desk 登录中心与「打开并登录」目标（SF = SegmentFault 思否）
+  'DESK_LOGIN_HUB_URL',
+  'SF_LOGIN_ENABLED',
+  'SF_LOGIN_URL',
+  'SF_LOGIN_BUTTON_LABEL',
 ]
 
 // Parse a .env file's text into a { KEY: VALUE } object.

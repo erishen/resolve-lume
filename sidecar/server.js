@@ -37,6 +37,7 @@ const { renderToolCatalog } = require('./toolCatalog')
 const { matchTaskByMessage } = require('./taskMatch')
 const { taskCopy, SCOPES, renderSoulPrompt } = require('./taskCopy')
 const { sessionTitle } = require('./sessionTitle')
+const desk = require('./desktop-desk')
 
 // Human-approval set lives in builtin-exec (single source of truth, shared with
 // the security test). resolve-studio parity: tools stay visible; each gated
@@ -1596,21 +1597,47 @@ async function handle(req, res) {
     return send(res, 200, { stopped: true })
   }
 
-  // ---- desktop-login (disabled by default; no VNC/Chrome in lume image) ----
+  // ---- desktop-login: drive the shared browser-desk (Xvfb + x11vnc + Chrome) ----
+  // The desk is one long-lived browser shared by every task (WeChat drafts,
+  // Xianyu, 思否 …), so the desktop tab shows whatever was left on screen until
+  // we explicitly open the page this flow needs.
   if (p === '/api/desktop-login/sites' && method === 'GET') {
+    const hub = await desk.deskSites()
     return send(res, 200, {
       ok: true,
-      sites: [],
+      sites: desk.deskSiteNames(hub),
       sfLoginEnabled: process.env.SF_LOGIN_ENABLED === '1',
       sfLoginLabel: process.env.SF_LOGIN_BUTTON_LABEL || '桌面登录',
       sfLoginUrl: process.env.SF_LOGIN_URL || '',
+      deskReachable: await desk.probeDesk(),
+      hubError: hub.error || '',
     })
   }
   if (p === '/api/desktop-login' && method === 'GET') {
+    const target = desk.normalizeLoginUrl(q.get('url'))
+    if (!target) {
+      return send(res, 400, {
+        ok: false,
+        sites: [],
+        message: '无效的登录网址（只接受 http/https）。',
+        sfLoginEnabled: process.env.SF_LOGIN_ENABLED === '1',
+      })
+    }
+    try {
+      await desk.openInDesk(target)
+    } catch (e) {
+      return send(res, 200, {
+        ok: false,
+        sites: [],
+        message: e.message || '无法在桌面打开该页面。',
+        sfLoginEnabled: process.env.SF_LOGIN_ENABLED === '1',
+      })
+    }
+    const hub = await desk.deskSites()
     return send(res, 200, {
-      ok: false,
-      sites: [],
-      message: '桌面登录在此镜像中未启用（需 VNC + headed Chrome）。',
+      ok: true,
+      sites: desk.deskSiteNames(hub),
+      message: `已在桌面打开 ${target}；请在画面里完成登录，登录态由后续任务复用。`,
       sfLoginEnabled: process.env.SF_LOGIN_ENABLED === '1',
     })
   }

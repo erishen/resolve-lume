@@ -34,6 +34,9 @@ export function DesktopPanel() {
       setSfEnabled(r.sfLoginEnabled ?? false)
       setSfLabel(r.sfLoginLabel ?? '')
       setSfUrl(r.sfLoginUrl ?? '')
+      // Prefill the configured login target: the desk is shared with other
+      // tasks, so an empty box makes it look like the tab opens the wrong site.
+      if (r.sfLoginUrl) setUrl((cur) => (cur ? cur : (r.sfLoginUrl as string)))
     })
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
@@ -62,9 +65,10 @@ export function DesktopPanel() {
       if (result.ok) {
         setSavedSites(result.sites ?? [])
         setMessage(
-          result.sites && result.sites.length
-            ? `已收集 Cookie 的站点：${result.sites.join('、')}（访问即有 Cookie，不代表登录；Cookie 已持久化供下次复用）`
-            : '窗口已关闭，但未检测到登录态 Cookie，请确认是否完成登录',
+          result.message ??
+            (result.sites && result.sites.length
+              ? `已收集 Cookie 的站点：${result.sites.join('、')}（访问即有 Cookie，不代表登录；Cookie 已持久化供下次复用）`
+              : '窗口已关闭，但未检测到登录态 Cookie，请确认是否完成登录'),
         )
       } else {
         setMessage(result.message ?? '登录启动失败')
@@ -82,9 +86,7 @@ export function DesktopPanel() {
     if (!sfUrl) return
     setStatus('logging')
     setRemaining(Math.round(DEFAULT_WAIT_MS / 1000))
-    setMessage(
-      `Chrome 已在下方桌面打开 ${sfUrl}，请在画面里完成登录；检测到登录态后自动继续并写回会话`,
-    )
+    setMessage(`正在桌面打开 ${sfUrl}…`)
     if (timerRef.current) clearInterval(timerRef.current)
     timerRef.current = setInterval(() => {
       setRemaining((s) => (s > 0 ? s - 1 : 0))
@@ -93,18 +95,14 @@ export function DesktopPanel() {
       const result = await startDesktopLogin(sfUrl, DEFAULT_WAIT_MS, {
         exportSfState: true,
       })
-      if (result.ok) {
-        setSavedSites(result.sites ?? [])
-        setMessage(
-          result.stateExported
-            ? '登录态已保存并写回会话文件，可直接触发对应的发布任务'
-            : '窗口已关闭，但未检测到登录态 Cookie，请确认是否完成登录',
-        )
-      } else {
-        setMessage(result.message ?? '登录启动失败')
-      }
+      setSavedSites(result.sites ?? [])
+      setMessage(
+        result.ok
+          ? result.message ?? `已在桌面打开 ${sfUrl}，请在画面里完成登录。`
+          : result.message ?? '登录启动失败',
+      )
     } catch {
-      setMessage('请求后端失败，请确认桌面服务（websockify :6080）已在运行')
+      setMessage('请求后端失败，请确认 browser-desk 正在运行（http://127.0.0.1:16082）')
     } finally {
       if (timerRef.current) clearInterval(timerRef.current)
       setStatus('idle')
