@@ -28,7 +28,7 @@ if [ ! -f "$SRC" ]; then
 elif grep -q "$NEW" "$SRC"; then
   echo "[patch] lume-core http timeout 已是 20 min，无需修补"
 elif ! grep -q "$OLD" "$SRC"; then
-  echo "[patch] 警告：$SRC 里没有预期的 $OLD，上游可能已改过；请人工确认" >&2
+  echo "[patch] 警告：$SRC 里没有预期的 ${OLD}，上游可能已改过；请人工确认" >&2
 else
   # 用 python 做字节级替换，避免 BSD sed -i 的可移植问题
   python3 - "$SRC" "$OLD" "$NEW" <<'PY'
