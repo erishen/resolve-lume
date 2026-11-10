@@ -66,22 +66,21 @@ test('capabilities lists held-back tools and forbids the "not mounted" claim', a
 })
 
 // ---- 4. schema/enum drift vs the real data source ------------------------
-test('article-write enum matches projects.json; validators also cover older articles', () => {
-  const live = Object.keys(JSON.parse(fs.readFileSync(PROJECTS, 'utf8'))).sort()
-  const schemas = JSON.parse(fs.readFileSync(SCHEMAS, 'utf8')).tools
-  const withEnum = schemas.filter((t) =>
-    t.parameters && t.parameters.properties && t.parameters.properties.project &&
-    Array.isArray(t.parameters.properties.project.enum))
-  assert.ok(withEnum.length >= 4, 'expected write/validate/publish/archive enums')
-  const write = withEnum.find((t) => t.name === 'article-write')
-  assert.deepEqual([...write.parameters.properties.project.enum].sort(), live,
-    'article-write.project.enum drifted from projects.json')
-  // validate/publish/archive also accept already-generated articles that have
-  // since left the write queue (e.g. legacy-zh.md), so their enum is a superset.
-  for (const t of withEnum.filter((x) => x.name !== 'article-write')) {
-    const en = t.parameters.properties.project.enum
-    for (const k of live) assert.ok(en.includes(k), `${t.name} missing ${k}`)
-    assert.ok(en.length >= live.length, `${t.name} enum is smaller than projects.json`)
+test('article project enums are exactly the derived set (no drift either way)', () => {
+  const E = require('./projectEnums')
+  const live = E.liveProjects().slice().sort()
+  const doc = JSON.parse(fs.readFileSync(SCHEMAS, 'utf8'))
+  const cur = E.currentEnums(doc)
+  for (const name of E.ENUM_TOOLS) assert.ok(cur[name], `${name} has no project enum`)
+  // The write queue is exactly what projects.json lists right now.
+  assert.deepEqual(cur['article-write'], live,
+    'article-write.project.enum drifted from projects.json — run `make sync-enums`')
+  // validate/publish/archive also accept articles that already left the queue
+  // (legacy, resolve-lume) but only while their body still exists on disk.
+  const want = E.expectedEnums({ live, current: Object.values(cur).flat() })
+  for (const name of E.ENUM_TOOLS.filter((n) => n !== 'article-write')) {
+    assert.deepEqual(cur[name], want.extended,
+      `${name}.project.enum drifted — run \`make sync-enums\``)
   }
 })
 

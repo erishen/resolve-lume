@@ -215,6 +215,10 @@ tools-lume-check:
 	node deploy/gen-sidecar-tools.mjs --check
 	@node sidecar/consistency.js --check
 
+# projects.json 增删项目后重写 article-* 的 project enum（校验会在 make check 里报漂移）
+sync-enums:
+	node sidecar/projectEnums.js
+
 # ---- A2A peer 面(静态节点: resolve.* 只读摘要能力, 不带 agent 面) ----
 # 详见 peer_node.lume。Lume server 用仓内 vendor/lume/bin/lume(make vendor/bootstrap
 # 由 scripts/vendor_lume_bin.sh 填充: 本地软链 ../../lume/lume/bin/lume, 单独 clone
@@ -303,4 +307,4 @@ sidecar-syntax-check:
 check: tools-lume-check test-gateway frontend-test shell-vars-check sidecar-syntax-check
 	@echo "✓ 工具桥生成约束 + 四处名单一致性 + 网关/SSE/进度/工具护栏/导出回归 + sidecar 语法 + shell 变量兼容检查全部通过"
 
-.PHONY: setup build up wait start down logs frontend-up mcp-bridges-up mcp-bridges-down mcp-bridges-logs sidecar-host-start sidecar-host-stop sidecar-host-restart sidecar-host-status sidecar-autostart-install sidecar-autostart-uninstall sidecar-autostart-restart sidecar-autostart-status tools-lume tools-lume-check vendor bootstrap peer-check peer-serve test-gateway frontend-test frontend-build-check shell-vars-check sidecar-syntax-check check
+.PHONY: setup build up wait start down logs frontend-up mcp-bridges-up mcp-bridges-down mcp-bridges-logs sidecar-host-start sidecar-host-stop sidecar-host-restart sidecar-host-status sidecar-autostart-install sidecar-autostart-uninstall sidecar-autostart-restart sidecar-autostart-status tools-lume tools-lume-check vendor bootstrap peer-check peer-serve test-gateway frontend-test frontend-build-check shell-vars-check sidecar-syntax-check sync-enums check

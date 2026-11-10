@@ -230,6 +230,12 @@ agent-httpd 的 API 与 resolve-studio 的 `/api/*` **不同**：
   C 侧改动在 `deploy/patch_agent_httpd_final_round.py`，由 `scripts/patch_vendored_sources.sh`
   第 8 步在 `make build` 前重打；校验用请求体 `rounds:1` + 一次工具调用：改前工具执行完
   正文 delta 为 0，改后同一请求产出正文。
+- **project enum 不再手写**：`article-*` 的 `project.enum` 由 `sidecar/projectEnums.js`
+  从 `projects.json` + 仍有正文的存盘文章派生——`article-write` 严格等于当前队列，
+  `validate/publish/archive` 额外保留 `legacy`、`resolve-lume` 这类已归档但文件仍在的
+  项目。`article-discover` 新增项目后忘了同步 enum 的漂移（11-09 `lume-qt` 那次），
+  现在 `toolContract.test` 会直接失败并提示跑 `make sync-enums`（只重写 enum，其他字段
+  一个字节不动）。
 - **发布必须用户显式授权**：`article-write(publish=true)` 只在「当前聊天消息」里明确
   写出发布 / 上线 / publish 时才放行（活跃流在 `progress.js` 里携带 userMessage）；
   用户只回清单编号时 `/api/tools/call` 直接拒绝。`publish.py` 的确认门在非交互环境
