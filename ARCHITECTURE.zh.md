@@ -333,7 +333,14 @@ PSE（Planner / Specialist / Evaluator）是 resolve-studio 的核心编排模�
 
 ## 9. 已知限制与路线图
 
-- **未含**：job 持久化/续跑、前端外围面板、Python PSE 框架（两端共享外部依赖）。
+- **后台 job：已覆盖**（结论已更新，早前「未含」的说法作废）—— sidecar `/api/jobs` 落 SQLite
+  （`node:sqlite`、WAL、事务、增量事件插入 O(1)）；取消会中断上游、续跑带历史。
+  仍建议：超长任务走 job 模式而非同步 chat（同步 chat 受前端 5 分钟静默流看门狗约束）。
+- **前端外围面板：已覆盖（简化版）** —— sessions / jobs / MCP / memory / workspace / skills / usage
+  均有 `/api/*` 路由与面板。剩余缺口：`/api/tasks/match` 仍是关键词匹配、无语义召回；
+  VNC 桌面登录只有 `/api/desktop-login*` 路由，未做成独立视图。
+- **Python PSE 框架：未内嵌** —— autogen / crewai / langgraph / llamaindex 仍是外部 `uv run` 依赖
+  （由 `souls/<task>/scripts/` 调起），两端共享，不在本仓字节范围内。
 - **MCP 已打通**：agent-httpd 只支持 stdio，故 5 座 Streamable HTTP 桥由 `lume-tools/mcp_http_proxy.sh` 做协议翻译后以 stdio 接入（`fs`/`fetch`/`git`/`memory`/`think` 全部 resident，工具数 46 → 99）；`deploy/mcp-servers-router.stub.json` 仍为空数组，用于阻止 router 注入 npx server。
 - **导出脱敏**：前端 `export.ts` 会剥除账户名、掩码凭据、截断 3000 字（含私有工作区根名剥离）。
 - **本地纪律**：项目遵循 "local commit only, no push"；`agent-httpd` / `lume-core` 已从 git 子模块改为 vendored 同名目录（从 GitHub release 拉源码），不再多仓协同提交。
