@@ -2,18 +2,25 @@
 # 幂等地修补 vendored 源码（agent-httpd/ 与 lume-core/ 不入库，make vendor/bootstrap
 # 会用上游源码覆盖本地改动，所以需要这个脚本在每次 build 前把本地必要的补丁打回去）。
 #
-# 两处：
-#   1) lume-core src/builtins_http.c 的 HTTP_MAX_TIMEOUT_MS 600000 → 1200000。
-#   原因：.lume 桥（lume-tools/sidecar_ro.lume）用 http_post 调宿主 sidecar，
-#   pse-review / article-write 这类多智能体任务实测 7-12 min，10 min 的封顶会让
-#   「报告已经写盘、桥却先 abort」，agent 收到 502 看不到结果（2026-11-09 实录）。
-#   上限只约束调用方允许传的最大值，实际仍由 opts.timeout 决定（桥自己用 870s，
-#   小于 agent-httpd 的 MCP_CALL_TIMEOUT 900s，让桥先失败并回可读错误）。
-#   2) agent-httpd src/agent/mcp.c：MCP tools/call 没有 metadata 通道，把 chat
-#   请求的 sessionId 作为 "_lume_session" 塞进 arguments，sidecar 据此把审批
-#   提示 / 进度帧路由到发起调用的那个会话（并发对话不再互相串台）。
-#
-# 两个补丁互相独立：任一处「已打」都不影响另一处继续检查。
+# 各步互相独立：任一处「已打」都不影响其余步继续检查；上游原文若变，断言
+# 会直接报错中止而不是静默漏打。清单（按执行顺序）：
+#   1) lume-core builtins_http.c：HTTP_MAX_TIMEOUT_MS 600000 → 1200000。
+#      原因：.lume 桥（lume-tools/sidecar_ro.lume）用 http_post 调宿主 sidecar，
+#      pse-review / article-write 这类多智能体任务实测 7-12 min，10 min 的封顶会让
+#      「报告已经写盘、桥却先 abort」，agent 收到 502 看不到结果（2026-11-09 实录）。
+#      上限只约束调用方允许传的最大值，实际仍由 opts.timeout 决定（桥自己用 870s，
+#      小于 agent-httpd 的 MCP_CALL_TIMEOUT 900s，让桥先失败并回可读错误）。
+#   2) agent-httpd mcp.c：MCP tools/call 没有 metadata 通道，把 chat 请求的
+#      sessionId 作为 "_lume_session" 塞进 arguments，sidecar 据此把审批提示 /
+#      进度帧路由到发起调用的那个会话（并发对话不再互相串台）。
+#   3) agent-httpd agent.c：ReAct 循环的 studio 式护栏（只把工具调用写成正文、
+#      只描述计划、工具跑完哑火时不再直接收尾）。
+#   4) lume-core：单个工具描述上限 160B → 1024B（99 工具面下相近名字靠一句话
+#      分不开，模型只能猜）。
+#   5) agent-httpd：把「写成正文的工具调用」解析出来并派发，而不是回给用户。
+#   6) agent-httpd：MCP 单工具 deny 名单（MCP_TOOL_DENY），git 那台只留 9 个。
+#   7) agent-httpd agent.c：超时报错带上实际预算 LLM_TIMEOUT（"upstream timeout
+#      (120s)"），秒数与 curl --max-time 同源，便于区分「模型慢」和「网关坏」。
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -64,7 +71,7 @@ fi
 # ToolRec.desc[161] 是「工具只能带一句话」的真正天花板（bridge_mcp.c 原样把该
 # 字段当 MCP description 发出）。99 工具面下，juejin-draft/juejin-publish、
 # shell/make 这类相近名字靠一句话分不开，模型只能猜。
-# ---- 6) agent-httpd: 把「写成正文的工具调用」捞回来执行 ----------------------
+# ---- 5) agent-httpd: 把「写成正文的工具调用」捞回来执行 ----------------------
 # 小模型偶尔把 {"name":..,"arguments":..} 当正文发出来。只催它重发，它可能
 # 一直重犯，最后把那截 JSON 当答案回给用户。这里直接解析并派发这一次调用。
 if [ -d "$AH" ]; then
@@ -80,7 +87,7 @@ else
   echo "[patch] 跳过：$LC 不存在（先 make vendor）"
 fi
 
-# ---- 5) agent-httpd: MCP 单工具 deny 名单（MCP_TOOL_DENY） --------------------
+# ---- 6) agent-httpd: MCP 单工具 deny 名单（MCP_TOOL_DENY） --------------------
 # MCP_ALLOW 只能整台服务器开关；git 那台注册 28 个工具，agent 只需要 9 个
 # （status/diff/log/show/blame/branch/remote/add/commit）。其余注册进来只是
 # 让模型多 19 个相近名字可猜，副作用型能力本来也走 shell + 人工审批。

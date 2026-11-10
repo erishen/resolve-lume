@@ -14,9 +14,10 @@ setup:
 	@bash scripts/vendor_repos.sh
 	@bash scripts/vendor_lume_bin.sh
 
-# vendored 源码不入库，每次 build 前把必要的本地补丁打回去（幂等）。
-# 补丁来源见 scripts/patch_vendored_sources.sh：目前只有 lume-core 的
-# HTTP_MAX_TIMEOUT_MS 600s→1200s（否则 pse-review 类长任务会在桥侧 502）。
+# vendored 源码（agent-httpd/、lume-core/）不入库，每次 build 前把本地必要的补丁
+# 打回去（幂等）。补丁清单与原因见 scripts/patch_vendored_sources.sh 的头部注释，
+# 以那里为唯一事实源——别在这里重复列举，否则会像早前那句「目前只有…」一样过期。
+# 注意：只有走 make build / make up 才打补丁；单独 `docker compose build` 不跑它。
 build: setup
 	@bash scripts/patch_vendored_sources.sh
 	docker compose build
