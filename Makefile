@@ -277,6 +277,7 @@ test-gateway:
 	@node sidecar/chatBody.test.js
 	@node sidecar/sessionTitle.test.js
 	@node sidecar/articleArchiveNumbering.test.js
+	@node sidecar/approval.test.js
 
 # 前端回归：Node >= 22.6 原生剥 TS 类型，零依赖、不碰运行中的服务。
 #  - export: 会话 Markdown / 单条复制 / JSON / job 日志都不带出主目录与密钥

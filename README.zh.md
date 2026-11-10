@@ -400,6 +400,14 @@ make sidecar-autostart-restart              # launchd 模式
   `consistency.js` 与 `consistency.test.js`）；本地生成调试可临时 `ALLOW_TOOL_DRIFT=1`。
 - `/api/approval` 当前没有 gated tool 可解锁：端点会校验 `decision` / `callId`、记审计日志，
   并显式返回 `applied:false`，不再假装用户点「批准」真的改变了执行。
+- **只读 shell 免审批**：审批粒度是「一次会改状态的工具调用」，不是「一个任务」，所以单步
+  任务里只要落到 `shell`/`make`/发布类就弹窗。现在 `isReadOnlyShell` 放行一类明确只读的
+  命令：`ls`/`cat`/`head`/`tail`/`wc`/`grep`/`rg`/`find`/`pwd`/`stat`/`file`/`du`/`which`/`diff`
+  以及 `git status|diff|log|show|rev-parse|ls-files|blame|describe|shortlog`，前提是命令里
+  没有 `; | & > < $ 反引号` 与换行。写危险项仍拦：`find -delete`/`-exec` 等写标记、
+  `.env`（`.env.example` 除外）/`.ssh`/`id_rsa`/`.pem` 等凭据路径、以及一切不在白名单的
+  程序（`mkdir`/`rm`/`sort -o`/`sudo`）。校验：`make check` 里的 `sidecar/approval.test.js`
+  （11 例，含 15 条该跑与 15 条该拦的命令清单）。
 - **导出脱敏**：会话 Markdown / 单条复制 / JSON / job 诊断日志统一走 `export.ts` 的
   `exportText()` —— 绝对路径剥掉系统前缀与账户名后只留末 3 段（短路径也不带用户名）、
   `sk-` / `ghp_` / `Bearer` 等凭据形态掩码、单段文本截断 3000 字。之前只有 `jobToLog`

