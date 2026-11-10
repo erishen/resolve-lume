@@ -174,6 +174,7 @@ tsm-hub 侧新增了 A2A 面（`/.well-known/agent-card.json`、`/a2a`，以及�
 ### 4.3 模型白名单与 free/paid 切换
 
 - `LLM_ALLOWED_MODELS`：C 后端**仅校验前端下发的 `model` override**；`LLM_MODEL`（兜底）不受限。空 = 不限制。
+- `LLM_TIMEOUT`：**单轮**模型调用的总预算（秒），也是 `curl --max-time` 的值；缺省 60，越界（`<=0` 或 `>600`）回落 60。`docker-compose.yml` 里透传 `${LLM_TIMEOUT:-60}`，本机 `.env` 设 120。带大工具输出（`article-discover` 那类几十 KB 的清单）的那一轮会顶满预算，用满后整轮被替换成 `upstream timeout (<Ns>)`——**报错里的秒数就是实际预算**，想放宽就改 `.env` 再 `docker compose up -d backend`。
 - 前端开关：
   - `/api/models` 返回 `{免费, 付费}` 对（默认 `agnes-2.0-flash` / `deepseek-v4-flash`），`LLM_FREE_MODEL` / `LLM_PAID_MODEL` 可覆盖。
   - `/api/pse-provider`（GET/POST 选 `free` / `deepseek`）控制 PSE 编排走哪档模型。

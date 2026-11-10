@@ -172,6 +172,9 @@ npm run dev   # :5173
 - **`.env`**：`LLM_API_URL/LLM_API_KEY/LLM_MODEL` 走 OpenAI 兼容；`PSE_ENABLED` 已不再生效——
   PSE 由前端「🧩 PSE」开关控制（sidecar 据此把 `/api/chat` 转发到 `/react/api/pse` 或 `/react/api/chat`），
   容器的 `PSE_ENABLED` 固定为 `false`，否则普通 chat 路由也会被强制跑 PSE、开关失效。
+- **`LLM_TIMEOUT`**（单轮预算，默认 60s，`1..600`）：容器里 `docker-compose.yml` 透传 `${LLM_TIMEOUT:-60}`，本机
+  设 120。用满时这一轮会被替换成 `upstream timeout (<Ns>)`（秒数即实际预算）；带大工具输出的轮次最容易顶满，
+  要放宽就改 `.env` 后 `docker compose up -d backend`。
 - **`.dockerignore`**：仓库根与 `frontend/` 均已排除 `.env` / `.env.*`，防止本地密钥被 `COPY . .` 烤入镜像
   （dev 模式 `.env` 仅由 Vite 的 Node 侧读取、绝不进浏览器 bundle；详见 `ARCHITECTURE.zh.md` 第 7、8 节）。
 - **`souls/<role>/SOUL.md`**：改角色分工无需重建镜像（已 bind mount）。
