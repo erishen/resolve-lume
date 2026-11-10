@@ -49,4 +49,22 @@ function buildTrafficDigest(rows, opts = {}) {
   return out.join('\n')
 }
 
-module.exports = { buildTrafficDigest }
+/** dev-stats 账号画像行（关注者/关注/公开仓库/注册年）——属个人信息，返回给模型前整行丢弃。 */
+const ACCOUNT_PROFILE_RE = /^\s*账号[:：].*(关注者|公开仓库)/
+
+/**
+ * 返回给模型前的脱敏：家目录缩短成 ~，账号画像行丢弃，其余原样。
+ * @param {string} text
+ * @param {string} [home] 家目录绝对路径（一般传 os.homedir()）
+ * @returns {string}
+ */
+function sanitizeToolText(text, home) {
+  const s = String(text == null ? '' : text)
+  const out = home ? s.split(home).join('~') : s
+  return out
+    .split('\n')
+    .filter((line) => !ACCOUNT_PROFILE_RE.test(line))
+    .join('\n')
+}
+
+module.exports = { buildTrafficDigest, sanitizeToolText }

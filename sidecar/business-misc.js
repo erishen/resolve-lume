@@ -10,7 +10,8 @@ const fsp = require('fs/promises')
 const path = require('path')
 const H = require('./business-helpers')
 const { isSafeMakeVarValue } = require('./security')
-const { buildTrafficDigest } = require('./devstats-digest')
+const os = require('os')
+const { buildTrafficDigest, sanitizeToolText } = require('./devstats-digest')
 const { parseStatsCsv } = require('./stats-csv')
 
 // 把整句检索词拆成可单独检索的项：空白 + 中文连接词（的/和/与/及/或）都算分隔，
@@ -562,7 +563,8 @@ module.exports = {
     } else {
       head.push('', out || '（无输出）')
     }
-    return H.truncateToTail([...head, '', ...tail].join('\n'), 48 * 1024)
+    // 返回前脱敏：家目录 → ~，账号画像行（关注者/关注/公开仓库）整行丢弃。
+    return sanitizeToolText(H.truncateToTail([...head, '', ...tail].join('\n'), 48 * 1024), os.homedir())
   },
 }
 

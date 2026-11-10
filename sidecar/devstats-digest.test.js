@@ -62,4 +62,21 @@ ok('topN 生效', () => {
   if (lines.length !== 2) throw new Error('topN=1 时应各榜 1 行，实际 ' + lines.length)
 })
 
+ok('sanitize：把家目录换成 ~（多处）', () => {
+  const s = load().sanitizeToolText('输出目录：/Users/alice/work/dev-stats\n预览：/Users/alice/work/x.html', '/Users/alice')
+  if (s.includes('/Users/alice')) throw new Error('家目录未脱敏：' + s)
+  if (!/输出目录：~\/work\/dev-stats/.test(s)) throw new Error('未替换为 ~：' + s)
+})
+
+ok('sanitize：账号画像行整行丢弃', () => {
+  const s = load().sanitizeToolText('已导出 CSV：output/stats.csv\n账号：@someone · 关注者 99 · 关注 303 · 公开仓库 120 · 注册于 2013\n', '/Users/alice')
+  if (s.includes('关注者')) throw new Error('画像行仍在：' + s)
+  if (!s.includes('已导出 CSV')) throw new Error('误删了正常行')
+})
+
+ok('sanitize：不传 home 时不改动普通文本', () => {
+  const t = '第一行\n第二行'
+  if (load().sanitizeToolText(t, '') !== t) throw new Error('无 home 时不应改写')
+})
+
 process.exit(failures ? 1 : 0)
