@@ -34,6 +34,11 @@ services:
       LLM_API_URL: "${LLM_API_URL:-https://api.openai.com/v1/chat/completions}"
       LLM_API_KEY: "${LLM_API_KEY:-}"
       LLM_MODEL: "${LLM_MODEL:-gpt-4o-mini}"
+      # 单轮模型调用的总时间预算（秒，agent-httpd 原样传给 curl --max-time）。
+      # 代码默认 60；免费池上带大工具输出的那一轮（如 article-discover 之后）
+      # 实测会顶满 60s 并报 "upstream timeout"，那一轮结果直接丢失。容器部署
+      # 必须把这个 knob 透进去，否则只能吃默认值。
+      LLM_TIMEOUT: "${LLM_TIMEOUT:-60}"
       LLM_SYSTEM_EXTRA: "${LLM_SYSTEM_EXTRA:-}"
       # 最小模型白名单：聊天 UI 能下发的模型名必须在此列（逗号/空格分隔）。
       # 留空=不限制。C 后端仅校验「前端 override」，LLM_MODEL 兜底不受限。
