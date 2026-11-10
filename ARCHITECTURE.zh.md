@@ -255,6 +255,22 @@ MCP 的 `fs__read_text_file`（只读、挂载整个 workspace、没有自建白
 `sidecar/shellAllow.test.js` 把「带管道/重定向/命令替换」「脚本在树外」「换成 node 或
 别的 .py」都钉成仍要审批。`code-review` 因此不再出现「stats 脚本未获批准，跳过统计」。
 
+### 4.6 付费 PSE 与 deep-review
+
+`deep-review` 任务卡承诺「付费 DeepSeek 复盘」，但对话里有两个漏洞，2026-11-09 实跑暴露后修掉：
+
+1. 模型调用 `pse-review({})` 时省略 `provider`，builtin 按 `PSE_REVIEW_PROVIDER` 回落免费档，
+   任务卡的承诺静默失效。现在 `/api/chat` 会把「会话 → taskId」记进内存表
+   （`server.js` 的 `sessionTasks`），`/api/tools/call` 认出 `pse-review` 且无 `provider`
+   时，若该会话属于 `deep-review` 就补 `provider='deepseek'`，并打一行日志。
+2. builtin `pse-review` 直接给 autogen 设 `OPENAI_MODEL=deepseek-v4-flash`，
+   **从不检查** `PSE_ALLOW_PAID`，等于绕过操作员开关静默花钱。现在 `business-pse.js`
+   每次调用都读 `frameworks/autogen-pse/.env`：开关没开就原样返回 `error: DEEPSEEK_GATED`，
+   不调模型、不产生费用（`sidecar/pseGate.test.js` 钉住解析边界：空值/注释/其它值都算关）。
+
+SOUL 另外去掉了一条「先问用户是否放行付费闸门」的二次确认——审批本就由界面
+Approve/Reject 承载，聊天里再问一次只是白等一轮。
+
 --- 
 
 ## 5. PSE 三角色编排
@@ -357,19 +373,3 @@ PSE（Planner / Specialist / Evaluator）是 resolve-studio 的核心编排模�
 | 后端原生工具集 | sidecar 内置工具（`builtin-exec.js`，9 真实现 + 占位）|
 | 直接对外 REST | 前端反代 + 宿主 sidecar 网关（fail-closed token）|
 | 单仓部署 | 主仓（含 vendored 的 agent-httpd / lume-core 同名目录） + 宿主 sidecar |
-
-### 4.6 付费 PSE 与 deep-review
-
-`deep-review` 任务卡承诺「付费 DeepSeek 复盘」，但对话里有两个漏洞，2026-11-09 实跑暴露后修掉：
-
-1. 模型调用 `pse-review({})` 时省略 `provider`，builtin 按 `PSE_REVIEW_PROVIDER` 回落免费档，
-   任务卡的承诺静默失效。现在 `/api/chat` 会把「会话 → taskId」记进内存表
-   （`server.js` 的 `sessionTasks`），`/api/tools/call` 认出 `pse-review` 且无 `provider`
-   时，若该会话属于 `deep-review` 就补 `provider='deepseek'`，并打一行日志。
-2. builtin `pse-review` 直接给 autogen 设 `OPENAI_MODEL=deepseek-v4-flash`，
-   **从不检查** `PSE_ALLOW_PAID`，等于绕过操作员开关静默花钱。现在 `business-pse.js`
-   每次调用都读 `frameworks/autogen-pse/.env`：开关没开就原样返回 `error: DEEPSEEK_GATED`，
-   不调模型、不产生费用（`sidecar/pseGate.test.js` 钉住解析边界：空值/注释/其它值都算关）。
-
-SOUL 另外去掉了一条「先问用户是否放行付费闸门」的二次确认——审批本就由界面
-Approve/Reject 承载，聊天里再问一次只是白等一轮。
