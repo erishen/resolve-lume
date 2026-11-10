@@ -15,7 +15,7 @@
 |---|---|---|
 | **lume** (`agent-httpd`) | 后端运行时 | C 单二进制，内置 ReAct agent 循环 + PSE 三角色编排 + MCP client + SSE。约 1.7MB，**无 Node、无 nginx 依赖** |
 | **lume-core** | 自定义工具提供方 | 以 `--mcp` 模式把 `.lume` 脚本里的 `tool {}` 暴露成 MCP server，被 agent-httpd 拉取 |
-| **react** (Vite) | 前端 | 静态 SPA，由容器内 Node 服务 `frontend/server-entrypoint.mjs` 托管（CSP、安全头、SSE 超时、token 注入都在这里），反代 `/react` 与 `/api`；**镜像内没有 nginx**，`nginx.conf` 仅为退役参考 |
+| **react** (Vite) | 前端 | 静态 SPA，由容器内 Node 服务 `frontend/server-entrypoint.mjs` 托管（CSP、安全头、SSE 超时、token 注入都在这里），反代 `/react`、`/api` 与「桌面」Tab 的 `/novnc`（含 WebSocket 隧道）；**镜像内没有 nginx**，`nginx.conf` 仅为退役参考 |
 | **sidecar** (Node) | 网关 + 功能后端 + 工具执行层 | 宿主 macOS 常驻进程（非容器），监听 `127.0.0.1:3000`，由 `launcher.js`(:3099) 守护；直接复用宿主已装 node/python3/uv/make 工具链，读写宿主真实项目路径 |
 
 ## 架构
@@ -77,7 +77,7 @@ resolve-lume/
 └── frontend/                # Vite + React 聊天前端
     ├── src/{api.ts,App.tsx,types.ts,main.tsx,styles.css}
     ├── vite.config.ts       # dev 反代（/api→sidecar:3000 注入 token、/react→backend:8080 保留 Host）
-    ├── server-entrypoint.mjs # 真正生效的静态服务 + /api、/react 反代（CSP、Origin/Host 校验、token 注入、SSE 无超时）
+    ├── server-entrypoint.mjs # 真正生效的静态服务 + /api、/react、/novnc 反代（CSP、Origin/Host 校验、token 注入、SSE 无超时）
     ├── nginx.conf           # ⚠️ 未被 Dockerfile 使用的退役参考，别按它排障
     └── Dockerfile
 ```
@@ -95,7 +95,7 @@ resolve-lume/
 | **后台 job 持久化 / 续跑** | ✅ 已覆盖 | sidecar `/api/jobs` 落 SQLite（`node:sqlite`, WAL, 增量事件插入 O(1)，有事务）；取消会中断上游、续跑带历史 |
 | **shell / write_file 内置工具** | ✅ 已覆盖 | sidecar 本地执行 11 个工具（read/write/shell/make/analyze-dir/privacy-audit/stock-scan…），schema 与实现同源 |
 | 会话管理 UI / MCP 管理 UI | ✅ 已覆盖 | 会话已持久化 + 侧栏可用；MCP 面板展示 6 个 server 的真实状态与工具数（状态以后端已注册工具为准） |
-| 工作区分析 / VNC 桌面登录 / skills / usage | ⚠️ 部分 | skills/usage/workspace 已实现（souls 扫描 + `/api/usage` + `scanWorkspace`）；tasks-match 仅关键词匹配；VNC 桌面登录未启用 |
+| 工作区分析 / VNC 桌面 / skills / usage | ⚠️ 部分 | skills/usage/workspace 已实现（souls 扫描 + `/api/usage` + `scanWorkspace`）；tasks-match 仅关键词匹配；「桌面」Tab 的画面已接 browser-desk（`/novnc` 反代），自动化登录仍为占位 |
 | Python PSE 框架 (autogen/crewai/…) | ⚠️ 共享依赖 | 两端都 `uv run python run.py` 调起，谁都替代不了 |
 
 ## 快速开始
@@ -154,6 +154,24 @@ npm run dev   # :5173
 |---|---|---|
 | `/api/*` | `127.0.0.1:3000` 宿主 sidecar | Vite 在 Node 侧注入 `X-Sidecar-Token`（从仓库根 `.env` 读，**不进浏览器 bundle**）；客户端伪造的同名头会先被删除再强制覆盖 |
 | `/react/*` | `127.0.0.1:8080` backend | `changeOrigin:false` 保留原始 `Host`，否则后端同源校验 403 |
+| `/novnc/*` | `127.0.0.1:16082` browser-desk | 「桌面」Tab 的 noVNC 反代，`path` 重写为 browser-desk 根路径（`/novnc/websockify` → `/websockify`），并隧道 WebSocket |
+
+### 「桌面」Tab 的接线（`/novnc`）
+
+「桌面」Tab 本身不实现任何桌面：它把 noVNC 页面塞进 iframe，画面来自独立容器
+`browser-desk`（Xvfb + x11vnc + websockify，6080 发布到宿主 `127.0.0.1:16082`）。
+
+- **生产**：`frontend/server-entrypoint.mjs` 把 `/novnc/*` 反代到 `DESKTOP_URL`
+  （默认 `http://host.docker.internal:16082`，可用 `.env` 覆盖），路径由
+  `frontend/novnc-route.mjs` 重写（单测 `novnc-route.test.mjs`，已入门禁）。
+  `server.on('upgrade')` 单独隧道 WebSocket —— 只代理 HTTP 会得到一页永远连不上的画面。
+- **安全头**：SPA 默认 `X-Frame-Options: DENY` 会让同源 iframe 也拒绝渲染，
+  因此 `/novnc/*` 的响应改用 `SAMEORIGIN` + `frame-ancestors 'self'`。
+- **不在本仓镜像里**：`Dockerfile.backend` 没有也没有必要有 Xvfb/websockify；
+  backend 只管 `agent-httpd`。桌面挂了先看 `docker ps | grep browser-desk`，
+  再 `curl -s http://127.0.0.1:16082/vnc.html | head -1` 确认 noVNC 本身还活着。
+- **仍为占位**：`/api/desktop-login*`（「打开并登录」的自动化登录）未接 browser-desk
+  的登录中心，返回 `桌面登录在此镜像中未启用`；`SF_LOGIN_ENABLED=1` 之前不会显示入口。
 
 两条链路都设了 `timeout/proxyTimeout = 0`，分钟级 SSE 长任务不会被掐断。
 **前提**：宿主 launcher + sidecar 已在跑（`make sidecar-host-start`）；frontend / backend

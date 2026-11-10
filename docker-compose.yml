@@ -115,6 +115,10 @@ services:
       # 必填，与 .env 的 SIDECAR_TOKEN 同源。server-entrypoint.mjs 在启动时
       # fail-closed：缺失会直接退出，且向下游注入时强制覆盖客户端同名头。
       SIDECAR_TOKEN: "${SIDECAR_TOKEN:?SIDECAR_TOKEN must be set in .env}"
+      # 「桌面」Tab 的 noVNC 由独立的 browser-desk 容器提供：6080 发布在宿主
+      # 127.0.0.1:16082，前端在这里把 /novnc/* 反代过去（含 WebSocket 升级）。
+      # 换端口只改这个变量，不用重建镜像。
+      DESKTOP_URL: "${DESKTOP_URL:-http://host.docker.internal:16082}"
     ports:
       - "127.0.0.1:18085:80"
     # Node 服务要把 /api/* 反代到宿主 loopback 上的 sidecar（127.0.0.1:3000），

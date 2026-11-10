@@ -16,7 +16,8 @@ COPY --from=build /app/dist .
 # server-entrypoint.mjs only uses Node built-ins (http/fs/path/url).
 # The runtime stage therefore needs no npm install at all — the earlier
 # `npm install http-proxy` was a dead dependency.
-COPY package.json ./package.json
-COPY server-entrypoint.mjs .
+# One COPY for all runtime sources: OrbStack's buildkit races on concurrent
+# context reads for multiple COPY lines (checksum mismatch), so keep it single.
+COPY package.json server-entrypoint.mjs novnc-route.mjs ./
 EXPOSE 80
 CMD ["node", "server-entrypoint.mjs"]

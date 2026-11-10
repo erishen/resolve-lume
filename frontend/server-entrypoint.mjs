@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import http from 'http';
 import { createHash } from 'crypto';
+import { novncUpstreamPath } from './novnc-route.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -101,8 +102,33 @@ function safeAssetPath(urlPath) {
 
 const sidecarUrl = 'http://host.docker.internal:3000';
 const backendUrl = 'http://backend:8080';
+// The 桌面 tab embeds noVNC from the browser-desk container. Its 6080 is
+// published on the host at 16082, and the frontend container reaches the host
+// through the same host-gateway alias the /api proxy already uses. Overridable
+// for a different published port without rebuilding the image.
+const desktopUrl = process.env.DESKTOP_URL || 'http://host.docker.internal:16082';
 
-function proxyRequest(req, res, targetUrl) {
+// noVNC is a full document with its own inline bootstrapping, so the SPA's CSP
+// does not fit it. More importantly the tab embeds it in an iframe, and the
+// default X-Frame-Options: DENY made the frame refuse to render even though it
+// is same-origin. Desktop responses therefore carry a same-origin framing policy.
+const DESKTOP_HEADERS = {
+  'Content-Security-Policy': [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "connect-src 'self' ws: wss:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-ancestors 'self'",
+  ].join('; '),
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'SAMEORIGIN',
+};
+
+function proxyRequest(req, res, targetUrl, opts = {}) {
   const parsed = new URL(targetUrl);
   // Strip any client-supplied token first, then force our own. Object keys with
   // different casing would otherwise emit TWO X-Sidecar-Token headers and the
@@ -111,7 +137,7 @@ function proxyRequest(req, res, targetUrl) {
   for (const k of Object.keys(headers)) {
     if (k.toLowerCase() === 'x-sidecar-token') delete headers[k];
   }
-  headers['X-Sidecar-Token'] = sidecarToken;
+  if (opts.injectToken !== false) headers['X-Sidecar-Token'] = sidecarToken;
   // Keep the ORIGINAL Host. agent-httpd rejects /react/* when Host is rewritten
   // to the upstream address (403) — this was a real incident in this project.
   // Keep SSE streams unbuffered end-to-end.
@@ -119,7 +145,7 @@ function proxyRequest(req, res, targetUrl) {
   const proxyOpts = {
     hostname: parsed.hostname,
     port: parsed.port || 80,
-    path: req.url,
+    path: opts.path || req.url,
     method: req.method,
     headers,
   };
@@ -128,10 +154,10 @@ function proxyRequest(req, res, targetUrl) {
     // Forward upstream headers (notably Content-Type: text/event-stream) instead
     // of dropping them; drop hop-by-hop ones and let Node choose the framing.
     const upstream = { ...proxyRes.headers };
-    for (const h of ['connection', 'transfer-encoding', 'keep-alive', 'upgrade', 'te', 'trailer', 'proxy-authenticate', 'proxy-authorization']) {
+    for (const h of ['connection', 'transfer-encoding', 'keep-alive', 'upgrade', 'te', 'trailer', 'proxy-authenticate', 'proxy-authorization', 'x-frame-options']) {
       delete upstream[h];
     }
-    res.writeHead(proxyRes.statusCode || 200, { ...upstream, ...SECURITY_HEADERS });
+    res.writeHead(proxyRes.statusCode || 200, { ...upstream, ...(opts.resHeaders || SECURITY_HEADERS) });
     proxyRes.pipe(res, { end: true });
   });
 
@@ -192,12 +218,53 @@ const server = http.createServer((req, res) => {
     proxyRequest(req, res, sidecarUrl);
   } else if (req.url.startsWith('/react/')) {
     proxyRequest(req, res, backendUrl);
+  } else if (novncUpstreamPath(req.url) !== null) {
+    // 桌面 tab: /novnc/* -> browser-desk's noVNC root (websockify on 6080).
+    proxyRequest(req, res, desktopUrl, {
+      path: novncUpstreamPath(req.url),
+      injectToken: false,
+      resHeaders: DESKTOP_HEADERS,
+    });
   } else if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'text/plain', ...SECURITY_HEADERS });
     res.end('ok');
   } else {
     serveStatic(req, res);
   }
+});
+
+// noVNC talks to websockify over a WebSocket, so the HTTP proxy above is only
+// half the path: without this upgrade tunnel the frame would show a page that
+// can never connect. Only /novnc/* is tunnelled; anything else is refused.
+server.on('upgrade', (req, socket, head) => {
+  const upstreamPath = novncUpstreamPath(req.url);
+  if (upstreamPath === null) {
+    socket.destroy();
+    return;
+  }
+  const parsed = new URL(desktopUrl);
+  const upstreamReq = http.request({
+    hostname: parsed.hostname,
+    port: parsed.port || 80,
+    path: upstreamPath,
+    method: 'GET',
+    headers: { ...req.headers },
+  });
+  upstreamReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
+    const lines = [`HTTP/1.1 101 ${proxyRes.statusMessage}`];
+    for (let i = 0; i < proxyRes.rawHeaders.length; i += 2) {
+      lines.push(`${proxyRes.rawHeaders[i]}: ${proxyRes.rawHeaders[i + 1]}`);
+    }
+    socket.write(lines.join('\r\n') + '\r\n\r\n');
+    if (proxyHead && proxyHead.length) socket.write(proxyHead);
+    if (head && head.length) proxySocket.write(head);
+    proxySocket.pipe(socket);
+    socket.pipe(proxySocket);
+    proxySocket.on('error', () => socket.destroy());
+    socket.on('error', () => proxySocket.destroy());
+  });
+  upstreamReq.on('error', () => socket.destroy());
+  upstreamReq.end();
 });
 
 // Equivalent of nginx.conf's proxy_read/send_timeout 1800s. Node's default

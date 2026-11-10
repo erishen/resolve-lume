@@ -285,6 +285,7 @@ test-gateway:
 frontend-test:
 	@node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON frontend/src/export.test.mjs
 	@node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON frontend/src/api.test.mjs
+	@node frontend/novnc-route.test.mjs
 
 # 前端类型 + 生产构建（需要 frontend/node_modules，先 npm install）。
 frontend-build-check:

@@ -34,6 +34,9 @@ export default defineConfig(({ mode }) => {
   const apiTarget = env.VITE_API_TARGET || process.env.VITE_API_TARGET || 'http://127.0.0.1:3000'
   const backendTarget =
     env.VITE_BACKEND_TARGET || process.env.VITE_BACKEND_TARGET || 'http://127.0.0.1:8080'
+  // browser-desk publishes noVNC (websockify) on host 127.0.0.1:16082.
+  const desktopTarget =
+    env.VITE_DESKTOP_TARGET || process.env.VITE_DESKTOP_TARGET || 'http://127.0.0.1:16082'
   if (!token) {
     console.warn(
       '[vite] SIDECAR_TOKEN not found in repo-root .env — /api proxy will get 401. ' +
@@ -70,6 +73,16 @@ export default defineConfig(({ mode }) => {
           // CRITICAL: keep the original Host. agent-httpd does a same-origin
           // check and answers 403 when Host is rewritten to the upstream.
           changeOrigin: false,
+          timeout: 0,
+          proxyTimeout: 0,
+        },
+        // 桌面 tab in dev: proxy noVNC to the published browser-desk port and
+        // tunnel the websocket, mirroring server-entrypoint.mjs.
+        '/novnc': {
+          target: desktopTarget,
+          changeOrigin: true,
+          ws: true,
+          rewrite: (p) => p.replace(/^\/novnc/, '') || '/',
           timeout: 0,
           proxyTimeout: 0,
         },
