@@ -78,6 +78,31 @@ function pinnedTaskName(taskMode, tasks) {
 }
 
 /**
+ * Positional projects ("7") are what the model actually passes after it prints
+ * a numbered list of candidates. The list it printed lives in an earlier
+ * message of the SAME session, so the number can be resolved against the
+ * choices the user saw — never against today's projects.json, which renumbers
+ * whenever a project is added or archived.
+ */
+const ENUM_ENTRY = /(\d{1,2})\s*[.、)]\s*([A-Za-z0-9][A-Za-z0-9._-]*)/g
+
+function enumeratedSubject(num, messages, beforeIndex) {
+  let hit = ''
+  for (let i = 0; i < beforeIndex; i++) {
+    const text = typeof messages[i].content === 'string' ? messages[i].content : ''
+    if (!text) continue
+    const re = new RegExp(ENUM_ENTRY.source, 'g')
+    let m
+    let found = ''
+    while ((m = re.exec(text)) !== null) {
+      if (m[1] === String(num) && PROJECT_KEY.test(m[2])) found = m[2]
+    }
+    if (found) hit = found
+  }
+  return hit
+}
+
+/**
  * What the session actually did: the LAST outcome-bearing tool it called.
  * Read from the recorded tool calls rather than guessed from the prompt — the
  * prompt only tells us which soul it matches, and "archived an article" and
@@ -85,11 +110,17 @@ function pinnedTaskName(taskMode, tasks) {
  */
 function actionTitle(messages) {
   let last = null
-  for (const m of Array.isArray(messages) ? messages : []) {
+  let lastIndex = -1
+  const list = Array.isArray(messages) ? messages : []
+  for (let i = 0; i < list.length; i++) {
+    const m = list[i]
     const calls = m && (m.toolCalls || m.tool_calls)
     if (!Array.isArray(calls)) continue
     for (const c of calls) {
-      if (c && ACTION_TITLES[c.name]) last = c
+      if (c && ACTION_TITLES[c.name]) {
+        last = c
+        lastIndex = i
+      }
     }
   }
   if (!last) return ''
@@ -97,8 +128,11 @@ function actionTitle(messages) {
   const args = last.arguments || last.args || {}
   const raw = typeof args.project === 'string' ? args.project.trim() : ''
   // A numeric project is a position in a list that may already have changed;
-  // it must never end up in the rail as "· 7".
-  const subject = raw && !/^\d+$/.test(raw) && PROJECT_KEY.test(raw) ? raw : ''
+  // it must never end up in the rail as "· 7". Resolve it against the list the
+  // model printed earlier in this session, else drop the subject entirely.
+  let subject = ''
+  if (raw && PROJECT_KEY.test(raw) && !/^\d+$/.test(raw)) subject = raw
+  else if (/^\d+$/.test(raw)) subject = enumeratedSubject(raw, list, lastIndex)
   return shortTitle(subject ? `${label} · ${subject}` : label)
 }
 

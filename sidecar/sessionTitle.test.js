@@ -119,9 +119,48 @@ test('a positional number from the call never becomes the subject', () => {
         content: '已归档',
         toolCalls: [{ name: 'article-archive', arguments: { project: '7', confirm: true } }],
       },
+    ],  }
+  assert.equal(sessionTitle(rec, tasks), '归档文章')
+})
+
+test('a number is resolved against the list the user was shown', () => {
+  const rec = {
+    taskMode: 'auto',
+    title: '帮我归档一篇文章',
+    messages: [
+      { role: 'user', content: '帮我归档一篇文章。' },
+      {
+        role: 'assistant',
+        content: '要归档哪一篇？可选共 7 个项目：\n1. solo-chat\n2. rag-platform\n' +
+          '3. tax-agent-platform\n4. alva-e2e\n5. nsbp-shop-e2e\n6. legacy\n7. resolve-lume',
+      },
+      { role: 'user', content: '7' },
+      {
+        role: 'assistant',
+        content: '已成功归档 "resolve-lume" 项目的文章。',
+        toolCalls: [{ name: 'article-archive', arguments: { project: '7', confirm: true } }],
+      },
     ],
   }
-  assert.equal(sessionTitle(rec, tasks), '归档文章')
+  assert.equal(sessionTitle(rec, tasks), '归档文章 · resolve-lume')
+})
+
+test('a number with no earlier list stays subject-less (no "· 7")', () => {
+  const rec = {
+    taskMode: 'auto',
+    title: '归档',
+    messages: [
+      { role: 'user', content: '7' },
+      {
+        role: 'assistant',
+        content: '已归档',
+        toolCalls: [{ name: 'article-archive', arguments: { project: '7', confirm: true } }],
+      },
+    ],
+  }
+  const title = sessionTitle(rec, tasks)
+  assert.equal(title, '归档文章')
+  assert.ok(!/·\s*7/.test(title))
 })
 
 test('the last real action wins when a session moves on to publishing', () => {
