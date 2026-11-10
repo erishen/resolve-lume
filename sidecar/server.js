@@ -36,6 +36,7 @@ const { buildAgentChatBody, hasExplicitPublishIntent, hasExplicitPaidIntent } = 
 const { renderToolCatalog } = require('./toolCatalog')
 const { matchTaskByMessage } = require('./taskMatch')
 const { taskCopy, SCOPES, renderSoulPrompt } = require('./taskCopy')
+const { sessionTitle } = require('./sessionTitle')
 
 // Human-approval set lives in builtin-exec (single source of truth, shared with
 // the security test). resolve-studio parity: tools stay visible; each gated
@@ -1239,9 +1240,12 @@ async function handle(req, res) {
   // ---- sessions ----
   if (p === '/api/sessions' && method === 'GET') {
     const all = sessions()
+    // Derive the rail label on read so rows written by older builds render the
+    // same short title as new ones. Precedence rules live in sessionTitle.js.
+    const tasks = buildTasks()
     const list = Object.values(all).map((s) => ({
       id: s.id,
-      title: s.title,
+      title: sessionTitle(s, tasks),
       createdAt: s.createdAt,
       updatedAt: s.updatedAt,
       messageCount: (s.messages || []).length,
@@ -1254,11 +1258,15 @@ async function handle(req, res) {
     const all = sessions()
     const id = body.id || uid('s_')
     const now = new Date().toISOString()
+    const taskMode = body.taskMode || 'auto'
+    const messages = body.messages || []
     all[id] = {
       id,
-      title: body.title || '未命名对话',
-      taskMode: body.taskMode || 'auto',
-      messages: body.messages || [],
+      // Same derivation as the list endpoint: the client no longer decides what
+      // the rail shows.
+      title: sessionTitle({ title: body.title, taskMode, messages }, buildTasks()),
+      taskMode,
+      messages,
       createdAt: all[id]?.createdAt || now,
       updatedAt: now,
     }
