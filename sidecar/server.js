@@ -1124,20 +1124,34 @@ async function handle(req, res) {
       // Human-in-the-loop gate (resolve-studio parity, 2026-11-09). Runs after
       // the cheap refusals above so a rejected-payload call never prompts.
       if (builtin.needsApproval(toolName, toolArgs)) {
-        const ap = await approval.request(toolName, toolArgs, callSession)
-        console.log(`[approval-gate] tool=${toolName} decision=${ap.decision} reason=${ap.reason || '-'} pending=${approval.pendingCount()}`)
-        if (ap.decision !== 'approve') {
-          const why = ap.reason === 'timeout'
-            ? `用户 ${Math.round(approval.TIMEOUT_MS / 1000)} 秒内没有批准（超时按拒绝处理）`
-            : ap.reason === 'user'
-              ? '用户在审批弹窗里点了 Reject'
-              : '当前没有活跃的对话流可以弹出审批（命令行/面板外的调用一律拒绝）'
-          return send(res, 200, {
-            name: toolName,
-            result:
-              `tool error: ${toolName} 需要人工批准后才可执行，${why}，已拒绝。` +
-              '请在对话里向用户说明要做什么并等其点击 Approve；不要换参数绕过，也不要声称已经执行。',
-          })
+        // The user's own message can already authorize a reversible local
+        // action by naming both the verb and the object ("把 X 的文章归档吧").
+        // Publishing still needs a click; see approval.preAuthorized.
+        // The bridge does not always tag the call with a session that matches
+        // a live stream, so fall back to the only open stream — never to one of
+        // several, since that could borrow another conversation's consent.
+        let intentMsg = callSession ? progress.chatUserMessageForSession(callSession) : ''
+        if (!intentMsg && progress.activeChatStreamIds().length === 1) {
+          intentMsg = progress.latestChatUserMessage()
+        }
+        if (approval.preAuthorized(toolName, toolArgs, intentMsg)) {
+          console.log(`[approval-gate] tool=${toolName} auto-approved by explicit user intent`)
+        } else {
+          const ap = await approval.request(toolName, toolArgs, callSession)
+          console.log(`[approval-gate] tool=${toolName} decision=${ap.decision} reason=${ap.reason || '-'} pending=${approval.pendingCount()}`)
+          if (ap.decision !== 'approve') {
+            const why = ap.reason === 'timeout'
+              ? `用户 ${Math.round(approval.TIMEOUT_MS / 1000)} 秒内没有批准（超时按拒绝处理）`
+              : ap.reason === 'user'
+                ? '用户在审批弹窗里点了 Reject'
+                : '当前没有活跃的对话流可以弹出审批（命令行/面板外的调用一律拒绝）'
+            return send(res, 200, {
+              name: toolName,
+              result:
+                `tool error: ${toolName} 需要人工批准后才可执行，${why}，已拒绝。` +
+                '请在对话里向用户说明要做什么并等其点击 Approve；不要换参数绕过，也不要声称已经执行。',
+            })
+          }
         }
       }
       // Conversational tool calls are a single blocking JSON POST — the C agent

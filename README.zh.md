@@ -411,7 +411,14 @@ make sidecar-autostart-restart              # launchd 模式
   验证目标免审（且不许带 `extraArgs`），`build`/`up`/`down`/`sync-enums`/重启类仍拦；
   通过 shell 写的 `make -C dir check` 也按同一份目标清单放行，`-j4`/`-f`/`VAR=…` 一律拦。
   校验：`make check` 里的 `sidecar/approval.test.js`
-  （12 例，含 15 条该跑与 15 条该拦的命令清单、以及 make 目标正反两列）。
+  （13 例，含 15 条该跑与 15 条该拦的命令清单、以及 make 目标正反两列）。
+- **用户明确意图预授权**：当用户自己的消息既写了动作又点了对象（例如「把 resolve-lume
+  的**归档**吧」），`article-archive` 这一次调用不再弹窗——人已经在模型提出之前授权了同一件事。
+  只对**可撤销的本地动作**生效：发布类（WordPress / 掘金 / 微信 / SF）永远要点击；项目用
+  **位置编号**（`"7"`）时仍然弹窗，因为编号每次都在变。审计日志打
+  `[approval-gate] tool=article-archive auto-approved by explicit user intent`。
+  桥接调用带的 session 与活跃流对不上时，仅当**只有一条**活跃对话流才回退用它的用户消息，
+  避免借用另一条会话的同意。
 - **导出脱敏**：会话 Markdown / 单条复制 / JSON / job 诊断日志统一走 `export.ts` 的
   `exportText()` —— 绝对路径剥掉系统前缀与账户名后只留末 3 段（短路径也不带用户名）、
   `sk-` / `ghp_` / `Bearer` 等凭据形态掩码、单段文本截断 3000 字。之前只有 `jobToLog`

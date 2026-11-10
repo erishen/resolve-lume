@@ -111,4 +111,32 @@ function _clearAll() {
   approvedByStream.clear()
 }
 
-module.exports = { request, resolve, pendingCount, TIMEOUT_MS, _clearAll }
+// ---- explicit user intent ---------------------------------------------------
+// A dialog exists to stop the model from deciding a side effect on its own. When
+// the user's own message already asks for that effect AND names the object, the
+// human authorized exactly this call before the model proposed it, and asking
+// again is pure friction (observed live: "把 X 的文章归档吧" still popped one).
+//
+// Only reversible LOCAL actions qualify. Anything that leaves the machine
+// (WordPress/Juejin/WeChat/SF publishing) still needs a click, and positional
+// project numbers are refused because the numbering shifts between runs.
+const INTENT_RULES = new Map([
+  ['article-archive', /归档|archive/i],
+])
+
+function escapeRe(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function preAuthorized(name, args, message) {
+  const verb = INTENT_RULES.get(name)
+  if (!verb) return false
+  const msg = String(message || '')
+  if (!msg.trim() || !verb.test(msg)) return false
+  const project = String((args && args.project) || '').trim()
+  if (!project || /^\d+$/.test(project)) return false
+  // The message must literally name the project: "那篇文章" does not identify it.
+  return new RegExp(`(^|[^A-Za-z0-9_-])${escapeRe(project)}($|[^A-Za-z0-9_-])`, 'i').test(msg)
+}
+
+module.exports = { request, resolve, pendingCount, preAuthorized, TIMEOUT_MS, _clearAll }

@@ -149,6 +149,19 @@ test('read-only make targets run unattended; build/restart/publish targets ask',
   }
 })
 
+test('explicit user intent pre-authorizes local archive, never publishing', () => {
+  const pre = approval.preAuthorized
+  const msg = '把 resolve-lume 的文章归档吧'
+  assert.equal(pre('article-archive', { project: 'resolve-lume', confirm: true }, msg), true)
+  assert.equal(pre('article-archive', { project: 'lume-a2a', confirm: true }, msg), false, 'other project is not covered')
+  assert.equal(pre('article-archive', { project: '7', confirm: true }, '把 7 号归档'), false, 'positional numbers drift, stay gated')
+  assert.equal(pre('article-archive', { project: 'resolve-lume' }, '看看 resolve-lume 的文章'), false, 'no archive verb')
+  assert.equal(pre('article-archive', { project: '' }, '把文章归档'), false, 'no target named')
+  assert.equal(pre('article-publish', { project: 'resolve-lume', confirm: true }, '把 resolve-lume 的文章发布'), false, 'publishing leaves the machine')
+  assert.equal(pre('juejin-publish', { project: 'resolve-lume' }, '把 resolve-lume 的文章归档'), false)
+  assert.equal(pre('article-archive', { project: 'resolve-lume' }, ''), false, 'no message -> no intent')
+})
+
 test('concurrent chats: prompt goes to the stream of the calling session', async () => {
   const a = fakeStream()
   const b = fakeStream()
