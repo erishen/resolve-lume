@@ -288,8 +288,16 @@ frontend-build-check:
 shell-vars-check:
 	@node scripts/check-shell-vars.cjs
 
-# 一条命令跑完所有不依赖运行中服务的静态校验（改工具面 / 安全策略后跑这个）
-check: tools-lume-check test-gateway frontend-test shell-vars-check
-	@echo "✓ 工具桥生成约束 + 四处名单一致性 + 网关/SSE/进度/工具护栏/导出回归 + shell 变量兼容检查全部通过"
+# sidecar 不在任何编译/类型检查路径里：语法坏一行，只在拉起时才炸。
+# 2026-11-09 实录：一次坏编辑把 console.log 与 if 拼成同一行，launcher 连拉
+# 6 次都报 SyntaxError: Unexpected token 'if'，sidecar 一直起不来。
+# node --check 只解析不执行、秒级完成，专门挡「整行拼接」这类事故。
+sidecar-syntax-check:
+	@for f in sidecar/*.js; do node --check "$$f" || { echo "✗ 语法错误：$$f"; exit 1; }; done
+	@echo "✓ sidecar/*.js 全部通过 node --check"
 
-.PHONY: setup build up wait start down logs frontend-up mcp-bridges-up mcp-bridges-down mcp-bridges-logs sidecar-host-start sidecar-host-stop sidecar-host-restart sidecar-host-status sidecar-autostart-install sidecar-autostart-uninstall sidecar-autostart-restart sidecar-autostart-status tools-lume tools-lume-check vendor bootstrap peer-check peer-serve test-gateway frontend-test frontend-build-check shell-vars-check check
+# 一条命令跑完所有不依赖运行中服务的静态校验（改工具面 / 安全策略后跑这个）
+check: tools-lume-check test-gateway frontend-test shell-vars-check sidecar-syntax-check
+	@echo "✓ 工具桥生成约束 + 四处名单一致性 + 网关/SSE/进度/工具护栏/导出回归 + sidecar 语法 + shell 变量兼容检查全部通过"
+
+.PHONY: setup build up wait start down logs frontend-up mcp-bridges-up mcp-bridges-down mcp-bridges-logs sidecar-host-start sidecar-host-stop sidecar-host-restart sidecar-host-status sidecar-autostart-install sidecar-autostart-uninstall sidecar-autostart-restart sidecar-autostart-status tools-lume tools-lume-check vendor bootstrap peer-check peer-serve test-gateway frontend-test frontend-build-check shell-vars-check sidecar-syntax-check check
