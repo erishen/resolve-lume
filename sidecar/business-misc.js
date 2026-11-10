@@ -10,6 +10,7 @@ const fsp = require('fs/promises')
 const path = require('path')
 const H = require('./business-helpers')
 const { isSafeMakeVarValue } = require('./security')
+const { buildTrafficDigest } = require('./devstats-digest')
 
 // 把整句检索词拆成可单独检索的项：空白 + 中文连接词（的/和/与/及/或）都算分隔，
 // 丢掉单字项（命中噪音太大）。用于严格匹配 0 命中时的放宽。
@@ -534,46 +535,33 @@ module.exports = {
       return `error: dev-stats make ${target} 失败 — ${H.truncate(String(r.error || ''), 800)}`
     }
     const out = cleanDevStatsOutput(`${r.stdout}\n${r.stderr}`)
-    const body = [
-      `dev-stats make ${target}${rawArgs ? ` ARGS=${rawArgs}` : ''}：`,
-      '',
-      out || '（无输出）',
-    ]
+    const head = [`dev-stats make ${target}${rawArgs ? ` ARGS=${rawArgs}` : ''}：`]
+    const tail = []
     if (out.includes('已导出 CSV') || out.includes('已生成 CSV 预览')) {
-      body.push(`输出目录：${dir}`)
+      tail.push(`输出目录：${dir}`)
     }
     const previewRel = (/已生成 CSV 预览：(\S+)/.exec(out) || [])[1]
     if (previewRel) {
-      body.push(`预览文件：${path.join(dir, previewRel.replace(/^\.\//, ''))}`)
+      tail.push(`预览文件：${path.join(dir, previewRel.replace(/^\.\//, ''))}`)
       const baseUrl = process.env.DEV_STATS_PREVIEW_BASE_URL || 'http://127.0.0.1:18085'
-      body.push(`预览链接：${baseUrl}/api/raw/${String(previewRel).split('/').pop()}`)
+      tail.push(`预览链接：${baseUrl}/api/raw/${String(previewRel).split('/').pop()}`)
     }
+    // 流量统计：先把「权威清单」放最前面，模型只需照抄；原始日志压到末尾并大幅截断，
+    // 否则 6 万字符的表格会让模型把仓库名现编出来（数字对、名字全是拼凑的）。
     if (target === 'csv' || target === 'csv-traffic') {
       const rows = parseStatsCsv(path.join(dir, 'output', 'stats.csv'))
-      if (rows.length > 0) {
-        const byClone = rows
-          .filter((r0) => Number(r0.cloners_14d || 0) > 0)
-          .sort((x, y) => Number(y.cloners_14d || 0) - Number(x.cloners_14d || 0))
-          .slice(0, 10)
-          .map(
-            (r0) =>
-              `${r0.name}（近14天独立clone ${r0.cloners_14d || 0} / clone总 ${r0.clones_total_14d || 0} / views ${r0.views_total_14d || 0}）`,
-          )
-        if (byClone.length) {
-          body.push(
-            '',
-            '【仓库热度排名（按近14天独立clone数，来自 stats.csv，仓库名以此处为准）】',
-          )
-          byClone.forEach((line, i) => body.push(`${i + 1}. ${line}`))
-          body.push(
-            '⚠ 注意：仓库名一律以上方排名清单为准，不要自行编造、拼凑或凭记忆补全。' +
-              '清单里没有出现的名字就是本次统计里没有的，宁可少写也不要写出来。',
-          )
-        }
+      const digest = buildTrafficDigest(rows)
+      if (digest) {
+        head.push('', digest)
+        head.push('', '⚠ 上面清单里的名字是唯一定义源；本回复只需照抄，不要改写或补充。')
+        tail.push('', '【原始日志（已截断，仅供核对，不要从这里摘仓库名）】', H.truncateToTail(out || '（无输出）', 4000))
+      } else {
+        head.push('', out || '（无输出）')
       }
+    } else {
+      head.push('', out || '（无输出）')
     }
-    // 结论与排名在日志末尾，保尾截断。
-    return H.truncateToTail(body.join('\n'), 96 * 1024)
+    return H.truncateToTail([...head, '', ...tail].join('\n'), 48 * 1024)
   },
 }
 
