@@ -165,7 +165,12 @@ function translateFrame(json, buf) {
     // overwrites the bubble, so this is where retry narration disappears.
     let answer = buf.pending.trim() || buf.answer.trim()
     if (!answer && buf.error) {
-      answer = `⚠️ 本次运行未完成：${buf.error}。请稍后重试，或在 .env 里切换 LLM_MODEL。`
+      // The hint has to match the class of failure: a timeout is spent budget,
+      // so pointing the user at LLM_MODEL would send them the wrong way.
+      const hint = /timeout/i.test(buf.error)
+        ? '模型调用用满了单轮预算 LLM_TIMEOUT，可在 .env 里调大后 docker compose up -d backend'
+        : '请稍后重试，或在 .env 里切换 LLM_MODEL'
+      answer = `⚠️ 本次运行未完成：${buf.error}。${hint}。`
     }
     if (!answer) {
       answer = emptyRunSummary(buf)

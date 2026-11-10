@@ -89,3 +89,13 @@ if [ -d "$AH" ]; then
 else
   echo "[patch] 跳过：$AH 不存在（先 make vendor）"
 fi
+
+# ---- 7) agent-httpd: 超时报错带上实际预算 ------------------------------------
+# 原先只报一句 "upstream timeout"，用户分不清「模型慢、该调大 LLM_TIMEOUT」和
+# 「网关坏了」。改成 "upstream timeout (120s)"，秒数与 curl --max-time 同源。
+if [ -f "$ROOT/agent-httpd/src/agent/agent.c" ]; then
+  python3 "$ROOT/deploy/patch_agent_httpd_timeout_message.py" \
+    "$ROOT/agent-httpd/src/agent/agent.c"
+else
+  echo "[patch] 跳过：agent-httpd/src/agent/agent.c 不存在（先 make vendor）"
+fi
