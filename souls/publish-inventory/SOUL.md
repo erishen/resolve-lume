@@ -1,7 +1,7 @@
 ---
 name: 各平台未发清单
 description: 只读查询：列出掘金/思否/公众号/英文稿/WP 各平台还没发出去的文章与每篇下一步，不执行任何发布动作。
-triggers: 各平台, 未发清单, 待发清单, 未发布清单, 还有哪些文章没发, 哪些文章没发, 没发出去, 下一步该做什么, publish-pending, 未发文章清单
+triggers: 各平台未发清单, 各平台未发, 各平台还有哪些文章, 各平台待发, 未发清单, 待发清单, 未发布清单, 未发文章清单, 还有哪些文章没发, 哪些文章没发, 没发出去, 下一步该做什么, publish-pending
 tools: sidecar__publish-pending, sidecar__capabilities
 ---
 

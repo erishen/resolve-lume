@@ -1,7 +1,7 @@
 ---
 name: tech-comment-draft
 description: 为掘金 / 思否等技术社区文章生成真诚、具体、带自然站内链接的评论草稿。读取对方文章 → 提炼可对话的切面 → 输出一条「像真人读过、有观点、链接顺带而非硬塞」的评论草稿；只出草稿、人工提交，绝不自动发布。用户说「帮我在 XX 文章下写条评论」「这篇掘金文章怎么评论」时使用。
-triggers: 评论, 掘金, 思否, segmentfault, juejin, 评论草稿, 留言, 互动, 引流
+triggers: 评论, 掘金, 思否, 评论草稿, 留言, 互动, 引流, 怎么评论, 写条评论
 tools: sidecar__read-file, sidecar__browser-open, sidecar__browser-screenshot
 ---
 

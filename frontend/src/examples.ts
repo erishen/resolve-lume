@@ -141,7 +141,18 @@ function titleFor(base: string): string {
   return ZH_TITLES[base] ?? humanize(base)
 }
 
+/**
+ * These souls are internal *task* definitions for the publish queue, not
+ * user-facing skills. `/api/skills` enumerates every soul, so without this
+ * guard they show up as two English-titled cards whose generic prompt
+ * 「完成文章相关的操作（写文章、发布、评论等）」 auto-matches article-write —
+ * the exact failure the publish-dispatch / publish-inventory tools were added
+ * to fix. Both scenarios already have dedicated tool cards above.
+ */
+const INTERNAL_QUEUE_SOULS = new Set(['publish-dispatch', 'publish-inventory'])
+
 function skillExample(s: SkillInfo): ExampleItem | null {
+  if (INTERNAL_QUEUE_SOULS.has(s.name)) return null
   const blob = (s.name + ' ' + (s.description ?? '')).toLowerCase()
   let prompt: string
   let category: ExampleCategory = 'other'
@@ -215,6 +226,16 @@ function toolExample(t: ToolSchema): ExampleItem | null {
       title: '各平台未发清单',
       prompt:
         '帮我列出掘金、思否、公众号、英文稿各平台还有哪些文章没发出去，以及每个下一步该做什么。',
+      category: 'article',
+    },
+    // build-juejin only writes a local md copy (no cookie, no draft). Keep the
+    // wording on the queue/local-copy triggers: the old fallback prompt said
+    // 「建成掘金草稿」 and auto-matched article-write, whose SKILL asks the user
+    // to pick a project instead of running the zero-arg tool.
+    'build-juejin': {
+      title: '生成掘金本地副本',
+      prompt:
+        '帮我用 build-juejin 为队列里下一篇缺副本的稿子生成本地副本（只写本地掘金版 md，不建草稿）。',
       category: 'article',
     },
     'juejin-draft': {

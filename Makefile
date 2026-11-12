@@ -279,6 +279,7 @@ test-gateway:
 	@node sidecar/chatBody.test.js
 	@node sidecar/toolCatalog.test.js
 	@node sidecar/taskMatch.test.js
+	@node sidecar/cardRoute.test.js
 	@node sidecar/souls.test.js
 	@node sidecar/sessionTitle.test.js
 	@node sidecar/articleArchiveNumbering.test.js
