@@ -68,6 +68,7 @@ export const TASK_CATEGORIES: Record<string, ExampleCategory[]> = {
   hotnews: ['hot-news'],
   devstats: ['devstats'],
   investment: ['invest'],
+  'investment-tools': ['invest'],
   'deep-review': ['invest'],
   foundation: ['code', 'other'],
   privacy: ['privacy'],
@@ -142,17 +143,53 @@ function titleFor(base: string): string {
 }
 
 /**
- * These souls are internal *task* definitions for the publish queue, not
- * user-facing skills. `/api/skills` enumerates every soul, so without this
- * guard they show up as two English-titled cards whose generic prompt
- * 「完成文章相关的操作（写文章、发布、评论等）」 auto-matches article-write —
- * the exact failure the publish-dispatch / publish-inventory tools were added
- * to fix. Both scenarios already have dedicated tool cards above.
+ * These souls are internal *task* definitions, not user-facing skills.
+ * `/api/skills` enumerates every soul, so without this guard they show up as
+ * English-titled cards with a generic prompt that auto-matches the wrong task
+ * (publish-inventory -> article-write; investment-tools -> weekly-investment).
+ * Their scenarios already have dedicated tool cards above.
  */
-const INTERNAL_QUEUE_SOULS = new Set(['publish-dispatch', 'publish-inventory'])
+const INTERNAL_TASK_SOULS = new Set([
+  'publish-dispatch',
+  'publish-inventory',
+  'investment-tools',
+])
+
+/** Exact-name cards for MCP tools whose descriptions used to fall through to
+ * the loose regexes below (git__git_remote's "URLs" hit the 抓取网页 branch).
+ * With the C-side allow-list now hard-enforced, a card that auto-matches a task
+ * whose whitelist lacks the tool would be refused at dispatch time — so these
+ * prompts deliberately avoid every soul trigger and stay on the full surface. */
+const MCP_EXAMPLES: Record<string, { title: string; prompt: string; category: ExampleCategory }> = {
+  'fs__read_file': {
+    title: '读取文件',
+    prompt: '用 fs__read_file 工具读取指定路径的文件内容并总结要点。',
+    category: 'code',
+  },
+  'fs__read_multiple_files': {
+    title: '批量读取文件',
+    prompt: '用 fs__read_multiple_files 工具一次读取我指定的几个文件并汇总内容。',
+    category: 'code',
+  },
+  'fs__write_file': {
+    title: '写文件',
+    prompt: '用 fs__write_file 工具把指定内容写入某个文件（写之前先确认路径）。',
+    category: 'code',
+  },
+  'git__git_remote': {
+    title: '查看 Git 远程仓库',
+    prompt: '用 git__git_remote 工具列出当前仓库配置的 remote 名称与地址（只读，不要新增或删除）。',
+    category: 'code',
+  },
+  'memory__search_nodes': {
+    title: '检索记忆节点',
+    prompt: '用 memory__search_nodes 工具在长期记忆里按关键词查找节点，列出命中的实体与观察。',
+    category: 'other',
+  },
+}
 
 function skillExample(s: SkillInfo): ExampleItem | null {
-  if (INTERNAL_QUEUE_SOULS.has(s.name)) return null
+  if (INTERNAL_TASK_SOULS.has(s.name)) return null
   const blob = (s.name + ' ' + (s.description ?? '')).toLowerCase()
   let prompt: string
   let category: ExampleCategory = 'other'
@@ -190,6 +227,20 @@ function toolExample(t: ToolSchema): ExampleItem | null {
   // examples and the card title match the bare tool name.
   const base = t.name.includes(':') ? t.name.slice(t.name.lastIndexOf(':') + 1) : t.name
   const blob = (t.name + ' ' + (t.description ?? '')).toLowerCase()
+  const mcp = MCP_EXAMPLES[t.name]
+  if (mcp)
+    return {
+      id: 'tool:' + base,
+      title: mcp.title,
+      prompt: mcp.prompt,
+      category: mcp.category,
+      tool: t.name,
+    }
+  // The loose regexes below were written for native bare names. Applied to a
+  // namespaced MCP tool they invent a wrong prompt (git__git_remote -> 抓取网页),
+  // and dedupe-by-prompt used to hide several of them behind one card. No card
+  // is better than a card that routes to a task which cannot run its tool.
+  if (t.name.includes('__')) return null
 
   // Curated, name-keyed examples. Match by NAME (not description) to avoid
   // cross-talk — e.g. article-discover's description mentions "article-publish",
@@ -361,6 +412,19 @@ function toolExample(t: ToolSchema): ExampleItem | null {
       prompt:
         '用 dev-stats 工具（target=report）汇总掘金和思否的文章数据，按日均阅读排序，看看最近哪篇文章传播效果最好。',
       category: 'devstats',
+    },
+    'capabilities': {
+      title: '查看可用工具',
+      prompt: '用 capabilities 工具列出当前注册的工具与能力，告诉我哪些可以直接调用。',
+      category: 'other',
+    },
+    // Dedupe-by-prompt used to hide these two behind the MCP loose-fallback
+    // cards. Now that MCP tools have exact-name copy, they would otherwise
+    // surface with a wrong prompt (browser-screenshot -> 「新建或修改一个文件」).
+    'browser-screenshot': {
+      title: '页面截图',
+      prompt: '用 browser-screenshot 工具给当前打开的页面截一张图，并把截图路径告诉我。',
+      category: 'code',
     },
     'skill-run': { title: '运行技能', prompt: `调用 ${t.name} 来完成任务。`, category: 'other' },
   }

@@ -314,13 +314,19 @@ sidecar-syntax-check:
 	@for f in sidecar/*.js; do node --check "$$f" || { echo "✗ 语法错误：$$f"; exit 1; }; done
 	@echo "✓ sidecar/*.js 全部通过 node --check"
 
+# vendored C 源码不入库，落库的是幂等补丁脚本本身。这条校验用脚本自带的锚点
+# 造一份「补丁前」文本，验证：能打上、二次执行是 no-op、锚点漂移会响亮报错、
+# 且补丁确实按正确顺序挂进了 patch_vendored_sources.sh（不依赖 agent-httpd 目录）。
+patch-check:
+	@python3 deploy/patch_agent_httpd_tool_scope.test.py
+
 # .env 卫生：必须 0600、未被跟踪、且被仓库自己的 .gitignore 覆盖
 env-perms-check:
 	@node scripts/check-env-perms.test.cjs
 	@node scripts/check-env-perms.cjs .
 
 # 一条命令跑完所有不依赖运行中服务的静态校验（改工具面 / 安全策略后跑这个）
-check: tools-lume-check test-gateway frontend-test shell-vars-check sidecar-syntax-check env-perms-check
-	@echo "✓ 工具桥生成约束 + 四处名单一致性 + 网关/SSE/进度/工具护栏/导出回归 + sidecar 语法 + shell 变量兼容检查全部通过"
+check: tools-lume-check test-gateway frontend-test shell-vars-check sidecar-syntax-check patch-check env-perms-check
+	@echo "✓ 工具桥生成约束 + 四处名单一致性 + 网关/SSE/进度/工具护栏/导出回归 + sidecar 语法 + vendored 补丁自检 + shell 变量兼容检查全部通过"
 
-.PHONY: setup build up wait start down logs frontend-up mcp-bridges-up mcp-bridges-down mcp-bridges-logs sidecar-host-start sidecar-host-stop sidecar-host-restart sidecar-host-status sidecar-autostart-install sidecar-autostart-uninstall sidecar-autostart-restart sidecar-autostart-status tools-lume tools-lume-check vendor bootstrap peer-check peer-serve test-gateway frontend-test frontend-build-check shell-vars-check sidecar-syntax-check sync-enums check env-perms-check
+.PHONY: setup build up wait start down logs frontend-up mcp-bridges-up mcp-bridges-down mcp-bridges-logs sidecar-host-start sidecar-host-stop sidecar-host-restart sidecar-host-status sidecar-autostart-install sidecar-autostart-uninstall sidecar-autostart-restart sidecar-autostart-status tools-lume tools-lume-check vendor bootstrap peer-check peer-serve test-gateway frontend-test frontend-build-check shell-vars-check sidecar-syntax-check patch-check sync-enums check env-perms-check

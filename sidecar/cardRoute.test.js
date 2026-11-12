@@ -55,13 +55,13 @@ const allows = (taskId, tool) => {
   return t.tools.some((n) => n === tool || n === `sidecar__${tool}` || n.endsWith(`__${tool}`))
 }
 
-// Pull `CURATED` out of the TypeScript source by text so this gate needs no
-// bundler: every entry is `'tool-name': { title, prompt, category }`.
-function curatedCards() {
+// Pull name-keyed card maps out of the TypeScript source by text so this gate
+// needs no bundler: every entry is `'tool-name': { title, prompt, category }`.
+function parseCards(startMarker, endMarker) {
   const src = fs.readFileSync(EXAMPLES, 'utf8')
-  const from = src.indexOf('const CURATED:')
-  const to = src.indexOf('\n  }', from)
-  assert.ok(from > 0 && to > from, 'CURATED block not found in examples.ts')
+  const from = src.indexOf(startMarker)
+  const to = src.indexOf(endMarker, from)
+  assert.ok(from > 0 && to > from, `${startMarker} block not found in examples.ts`)
   const block = src.slice(from, to)
   const out = []
   const re = /^\s*'([a-z0-9_-]+)':\s*\{([\s\S]*?)^\s*\},/gm
@@ -72,6 +72,9 @@ function curatedCards() {
   }
   return out
 }
+
+const curatedCards = () => parseCards('const CURATED:', '\n  }')
+const mcpCards = () => parseCards('const MCP_EXAMPLES:', '\n}')
 
 test('every curated tool card auto-matches a task that can actually run it', () => {
   const cards = curatedCards()
@@ -88,6 +91,26 @@ test('every curated tool card auto-matches a task that can actually run it', () 
   assert.deepStrictEqual(wrong, [], `card/tool mismatch:\n  ${wrong.join('\n  ')}`)
 })
 
+// MCP-derived cards are not in CURATED. Their old loose-fallback prompts
+// (e.g. git__git_remote -> 「抓取一个网页」) auto-matched a task whose
+// whitelist lacked the tool. With the C-side allow-list now a hard execution
+// boundary, such a card would be refused at dispatch time. Pin the copy and
+// assert it stays on the full tool surface (or on a task that allows it).
+test('MCP example cards stay callable under the hard allow-list', () => {
+  const src = fs.readFileSync(EXAMPLES, 'utf8')
+  assert.match(src, /if \(t\.name\.includes\('__'\)\) return null/,
+    'namespaced MCP tools must not fall through to the loose prompt regexes')
+  const cards = mcpCards()
+  assert.ok(cards.length >= 5, `only ${cards.length} MCP cards parsed — parser drifted`)
+  for (const c of cards) {
+    assert.doesNotMatch(c.prompt, /抓取一个网页|在代码库中搜索|分析一个目录/,
+      `${c.tool} still uses a loose-fallback prompt`)
+    const id = matched(c.prompt)
+    if (!id) continue
+    assert.ok(allows(id, c.tool), `${c.tool} -> ${id} would be refused at dispatch`)
+  }
+})
+
 // These are the exact card prompts that regressed. Keep them in sync with
 // examples.ts: a text edit that changes routing must be reviewed here too.
 // [card id, tool the card declares, exact prompt, expected task]
@@ -99,9 +122,12 @@ const PINNED = [
   ['tool:juejin-draft', 'juejin-draft', '帮我把下一篇未建草稿的文章建成掘金草稿（草稿=已发，同公众号口径；建完未发清单会自动把它标为已发并缩短队列）。', 'publish-dispatch'],
   ['tool:sf-pw-publish', 'sf-pw-publish', '帮我把下一篇未发布的文章发布到思否（用 Playwright 真浏览器）。', 'publish-dispatch'],
   ['tool:article-write', 'article-write', '帮我写一篇技术文章，用 crewai-pse 三角色流水线生成。', 'article-write'],
+  ['tool:stock-scan', 'stock-scan', '看看今天全市场有哪些值得关注的技术信号，用 stock-scan 工具扫一遍并列出趋势/买入/卖出信号。', 'investment-tools'],
+  ['tool:csv-analyze', 'csv-analyze', '帮我分析一份 CSV 数据，用 csv-analyze 工具给我一份带剖视/趋势/异常的报告。没有指定 CSV 文件时，直接用 csv-analyze 且不传 file 参数（用内置样例 data/sample_sales.csv 演示）。', 'investment-tools'],
+  ['tool:product-analyze', 'product-analyze', '帮我研究一下 Notion AI 这个产品，用 product-analyze 工具做产品与竞品分析。', 'investment-tools'],
 ]
 
-test('the seven card prompts that regressed stay on their intended task', () => {
+test('pinned card prompts stay on their intended task', () => {
   const src = fs.readFileSync(EXAMPLES, 'utf8')
   for (const [cardId, tool, prompt, want] of PINNED) {
     assert.ok(src.includes(prompt), `examples.ts no longer contains the ${cardId} card prompt — update this gate`)
@@ -119,10 +145,10 @@ test('negative intents must not be captured by the publish tasks', () => {
   for (const [label, p, want] of negatives) assert.equal(matched(p), want, label)
 })
 
-test('the two internal queue souls no longer produce generic skill cards', () => {
+test('internal task souls no longer produce generic skill cards', () => {
   const src = fs.readFileSync(EXAMPLES, 'utf8')
-  assert.match(src, /INTERNAL_QUEUE_SOULS/)
-  for (const id of ['publish-dispatch', 'publish-inventory']) {
+  assert.match(src, /INTERNAL_TASK_SOULS/)
+  for (const id of ['publish-dispatch', 'publish-inventory', 'investment-tools']) {
     assert.match(src, new RegExp(`'${id}'`), `${id} must stay in the filter set`)
   }
 })

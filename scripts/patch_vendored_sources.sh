@@ -23,6 +23,9 @@
 #      (120s)"），秒数与 curl --max-time 同源，便于区分「模型慢」和「网关坏」。
 #   8) agent-httpd agent.c：最后一轮留给答案——预算耗尽时不再带工具 schema，
 #      模型一直调工具也不会以「本轮没有产生回答」收场（2026-11-10 实录）。
+#   9) agent-httpd agent.c：把 per-request tools 白名单从「只过滤 schema」升级成
+#      执行层硬边界（dispatch / salvage / nudge 三处统一过滤），并让「工具跑完后
+#      正文里复述工具调用行」不再触发续推循环（2026-11-12 审计）。
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -106,6 +109,16 @@ if [ -f "$ROOT/agent-httpd/src/agent/agent.c" ]; then
   python3 "$ROOT/deploy/patch_agent_httpd_timeout_message.py" \
     "$ROOT/agent-httpd/src/agent/agent.c"
   python3 "$ROOT/deploy/patch_agent_httpd_final_round.py" \
+    "$ROOT/agent-httpd/src/agent/agent.c"
+else
+  echo "[patch] 跳过：agent-httpd/src/agent/agent.c 不存在（先 make vendor）"
+fi
+
+# ---- 9) agent-httpd: 白名单执行边界 + 复述工具调用的收敛 ---------------------
+# 必须排在 3/5/7/8 之后：本补丁的锚点是那些补丁改完之后的 agent.c 文本。
+# 缺了它，pin 任务只是提示——全局 g_tools 仍可被正文打捞的调用名穿透执行。
+if [ -f "$ROOT/agent-httpd/src/agent/agent.c" ]; then
+  python3 "$ROOT/deploy/patch_agent_httpd_tool_scope.py" \
     "$ROOT/agent-httpd/src/agent/agent.c"
 else
   echo "[patch] 跳过：agent-httpd/src/agent/agent.c 不存在（先 make vendor）"
