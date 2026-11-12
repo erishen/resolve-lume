@@ -76,10 +76,25 @@ function renderPendingList(data, opts = {}) {
   lines.push(
     `> 各平台未发清单（读 ${file}）：共 ${s.total ?? rows.length} 篇中文原稿，五端全齐 ${s.full ?? 0} 篇；数据快照 ${fmtTime(opts.snapshotMs)}`,
   )
+  // `jjNotPub` counts articles with NO Juejin presence at all (no local
+  // articles/juejin/*.md, usually still in pse/zh). `juejin-draft` only walks
+  // articles/juejin/*.md, so "掘金 3" is NOT "3 drafts waiting to be created".
+  // On 2026-11-12 that ambiguity made the model retry juejin-draft four times
+  // after the script correctly answered "全部已发布，无需操作", then ask the
+  // user about --force. Split the number instead of letting anyone guess.
+  const jjRows = rows.filter(
+    (r) => (r.missing || []).includes('juejin') || cellStatus(r.juejin) !== 'pub',
+  )
+  const jjDraft = jjRows.filter((r) => cellStatus(r.juejin) === 'draft').length
+  const jjTotal = Number(s.jjNotPub ?? jjRows.length) || 0
+  const jjNotReady = Math.max(0, jjTotal - jjDraft)
+  const jjLabel = jjTotal === 0
+    ? '掘金 0（无待办 ✓）'
+    : `掘金 ${jjTotal}（可直接建草稿 ${jjDraft} · 缺本地稿/未归档 ${jjNotReady}）`
   const counts = [
     `WP 中文 ${s.missingWp ?? rows.filter((r) => cellStatus(r.wp) !== 'pub').length}`,
     `英文稿 ${s.missingEn ?? rows.filter((r) => cellStatus(r.en) !== 'pub').length}`,
-    `掘金 ${s.jjNotPub ?? rows.filter((r) => cellStatus(r.juejin) !== 'pub').length}`,
+    jjLabel,
     `思否 ${s.sfNotPub ?? rows.filter((r) => cellStatus(r.sf) !== 'pub').length}`,
     `公众号 ${s.wcNoConv ?? rows.filter((r) => ['conv', 'missing'].includes(cellStatus(r.wechat))).length}`,
   ]
@@ -119,7 +134,8 @@ function renderPendingList(data, opts = {}) {
     '掘金',
     rows.filter((r) => (r.missing || []).includes('juejin')),
     (r) => NEXT_STEP[`juejin:${cellStatus(r.juejin)}`] || '建草稿',
-    '无源稿先 make build-juejin 建稿，再 make juejin-draft 建草稿（草稿=已发）',
+    '口径：这里的「掘金待办」是没有掘金本地稿/尚未发布的文章，不等于「待建草稿」；' +
+      'juejin-draft 只处理 articles/juejin 里已有本地稿且没有 juejin_draft_id 的文章，缺稿行不在其候选集里',
   )
   emit(
     '思否',
@@ -153,6 +169,15 @@ function renderPendingList(data, opts = {}) {
     // read-only query. They are user-facing notes, not an action list.
     lines.push('各平台下一步（供用户参考，本轮不要执行）：')
     for (const q of queue) lines.push(`  [${q.label} 待办 ${q.pending}] ${q.nextCmd}`)
+    // life-dash generates the queue command unconditionally. Say out loud when
+    // there is nothing that command can actually do right now.
+    if (jjDraft === 0 && jjTotal > 0) {
+      lines.push(
+        `  ⚠️ 掘金当前 0 篇可直接建草稿：现在执行 juejin-draft 会返回「全部已发布，无需操作」，` +
+          `重复调用或加 --force 都无效。请先按上面每行的「下一步」补掘金本地稿 / 归档，` +
+          `之后队列里才会出现可建草稿的候选。`,
+      )
+    }
   }
   lines.push('')
   lines.push('— 工具结果到此结束。请直接给用户中文总结并结束本轮：不要再发起任何工具调用，不要执行上面的建议命令，也不要复述运行轨迹。')
@@ -186,6 +211,34 @@ function staleCount(articlesDir, snapshotMs) {
     }
   }
   return n
+}
+
+// One-line, read-only snapshot for a queue tool that found no candidate.
+// Keeps the model from having to call publish-pending (which the dispatch
+// allow-list deliberately does not expose) just to explain why the pending
+// list still says "掘金 3" while juejin-draft says "queue is empty".
+function pendingHeadline() {
+  const file = pendingFile()
+  if (!file || !fs.existsSync(file)) return ''
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'))
+    const rows = Array.isArray(data.rows) ? data.rows : []
+    const s = (data && data.summary) || {}
+    const jjRows = rows.filter(
+      (r) => (r.missing || []).includes('juejin') || cellStatus(r.juejin) !== 'pub',
+    )
+    const draft = jjRows.filter((r) => cellStatus(r.juejin) === 'draft').length
+    const total = Number(s.jjNotPub ?? jjRows.length) || 0
+    const names = jjRows.slice(0, 3).map((r) => String(r.title || r.base || '?'))
+    return (
+      `当前未发清单快照：掘金待办 ${total} 篇（可直接建草稿 ${draft} 篇 · ` +
+      `缺本地稿/未归档 ${Math.max(0, total - draft)} 篇）` +
+      (names.length ? `，例如：${names.join('、')}` : '') +
+      '。这些篇数不是「待建草稿」，本工具不会处理它们。'
+    )
+  } catch {
+    return ''
+  }
 }
 
 function runPublishPending() {
@@ -223,6 +276,7 @@ module.exports = {
   pendingFile,
   renderPendingList,
   runPublishPending,
+  pendingHeadline,
   staleCount,
   SOURCE_DIRS,
   NEXT_STEP,

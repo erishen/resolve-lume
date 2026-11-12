@@ -8,8 +8,8 @@
 const fs = require('fs')
 const path = require('path')
 const H = require('./business-helpers')
-const { summarizeQueueOutput, QUEUE_TASKS } = require('./queueOutput')
-const { runPublishPending } = require('./publishPending')
+const { summarizeQueueOutput, QUEUE_TASKS, QUEUE_EMPTY_MARKER } = require('./queueOutput')
+const { runPublishPending, pendingHeadline } = require('./publishPending')
 const { resyncPendingList } = require('./pendingResync')
 
 const WP_TOOLS = process.env.WORDPRESS_TOOLS_DIR
@@ -102,7 +102,13 @@ async function runWpMakeTask(name, label, makeTarget, timeoutMs) {
     // The make target wrote an id back into an article frontmatter. The product
     // convention says the pending list then shortens automatically — that is
     // NOT wordpress-tools' job, so close the loop here (best effort, one line).
-    return summarizeQueueOutput(label, combined) + (await resyncPendingList(label))
+    // An EMPTY queue wrote nothing: skip the resync entirely (it would re-run
+    // the life-dash generator for no reason and rewrite the user's data files),
+    // and hand the model the live snapshot so it can explain why the pending
+    // list still counts articles that this tool cannot draft.
+    const summary = summarizeQueueOutput(label, combined, pendingHeadline())
+    if (summary.includes(QUEUE_EMPTY_MARKER)) return summary
+    return summary + (await resyncPendingList(label))
   }
   return `> ${label} 完成 (make ${makeTarget})\n\n` + H.truncate(combined, 32 * 1024)
 }

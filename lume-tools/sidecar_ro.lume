@@ -205,11 +205,11 @@ tool "hot-news-publish", "[APPROVAL][EXTERNAL] Publish a hot-news draft. For gen
   return sidecar_tool("hot-news-publish", stringify(p));
 };
 
-tool "build-juejin", "[APPROVAL] ZERO-ARG queue tool: build Juejin draft PAYLOADS locally for every article still missing a juejin copy (no upload). Never pass a project, never list candidates, never search for the Makefile with read-file/shell. To actually save a draft call juejin-draft. Needs approval; report the artifact path.", {}, (p) => {
+tool "build-juejin", "[APPROVAL] ZERO-ARG queue tool: build Juejin draft PAYLOADS locally for every article still missing a juejin copy (no upload). Never pass a project, never list candidates, never search for the Makefile with read-file/shell. Only articles/zh sources are covered; articles still in pse/zh need archive first. Chain to juejin-draft ONLY when the user explicitly asks; never call this to \"rescue\" an empty juejin-draft result. Needs approval; report the artifact path.", {}, (p) => {
   return sidecar_tool("build-juejin", stringify(p));
 };
 
-tool "juejin-draft", "[APPROVAL][EXTERNAL] ZERO-ARG queue tool: save a DRAFT for the NEXT unpublished article. Draft counts as published (draft=published, same as WeChat MP): the pending queue marks it sent and shrinks. Do NOT follow with juejin-publish unless the user explicitly asks to go live. Never pass a project, never list candidates, never search for scripts. One call per request; repeat only when the user asks for several articles.", {}, (p) => {
+tool "juejin-draft", "[APPROVAL][EXTERNAL] ZERO-ARG queue tool: save a DRAFT for the NEXT article in articles/juejin/*.md that has NO juejin_draft_id (one per call). Draft counts as published (same as WeChat MP): the pending queue marks it sent and shrinks. Do NOT follow with juejin-publish unless the user explicitly asks to go live. Never pass a project, never list candidates, never search for scripts. If it reports an empty queue, STOP: do not retry, do not --force, do not switch to capabilities/build-juejin/publish-pending. The pending list's Juejin count means missing local copies, NOT drafts waiting. Never quote tool names or suggest a retry in your answer. Repeat only when the user asks for several articles.", {}, (p) => {
   return sidecar_tool("juejin-draft", stringify(p));
 };
 

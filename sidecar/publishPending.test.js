@@ -11,7 +11,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const {
-  renderPendingList, runPublishPending, lifeDashRoot, pendingFile, staleCount, NEXT_STEP,
+  renderPendingList, runPublishPending, pendingHeadline, lifeDashRoot, pendingFile, staleCount, NEXT_STEP,
 } = require('./publishPending')
 const { resyncCommand } = require('./pendingResync')
 
@@ -68,6 +68,30 @@ test('draft / seed / missing get three different next-steps (studio regression)'
   assert.match(out, /可建稿.*make build-juejin/)
   assert.match(out, /需归档.*make archive/)
   assert.doesNotMatch(out, /已发.*→/)
+})
+
+// 2026-11-12: "掘金 3" was read as "3 drafts waiting to be created", while all
+// three rows were actually `missing` (no articles/juejin/*.md at all). The
+// model then retried juejin-draft four times after a correct empty-queue answer.
+test('the Juejin count is split into draftable vs not-yet-ready articles', () => {
+  const out = renderPendingList(fixture(), { file: 'x' })
+  assert.match(out, /可直接建草稿 1 · 缺本地稿\/未归档 2/)
+  assert.match(out, /不等于「待建草稿」/)
+  assert.doesNotMatch(out, /掘金 3 篇待建草稿/)
+})
+
+test('when nothing is draftable the queue command is explicitly called out as a no-op', () => {
+  const data = fixture()
+  data.rows = data.rows.filter((r) => r.base !== 'b').concat(
+    row('e', '仍缺本地稿', { juejin: 'missing' }, ['juejin']),
+  )
+  data.summary.jjNotPub = 3
+  data.queue = [{ plat: 'juejin', label: '掘金', pending: 3, nextCmd: 'make juejin-draft', note: '' }]
+  const out = renderPendingList(data, { file: 'x' })
+  assert.match(out, /可直接建草稿 0/)
+  assert.match(out, /0 篇可直接建草稿/)
+  assert.match(out, /全部已发布，无需操作/)
+  assert.match(out, /重复调用或加 --force 都无效/)
 })
 
 test('the conclusion and the read-only disclaimer come BEFORE the long detail', () => {
@@ -149,6 +173,35 @@ test('runPublishPending fails loudly (and readably) when the data source is abse
     const out = withEnv({ LIFE_DASH_DIR: dir, WORDPRESS_TOOLS_DIR: null }, () => runPublishPending())
     assert.match(out, /^error: 未找到未发清单数据源/)
     assert.match(out, /make export-pending/)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('pendingHeadline gives an empty queue the concrete pending-list numbers', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rl-pending-head-'))
+  try {
+    const data = fixture()
+    data.rows = [
+      row('a', '需归档 A', { juejin: 'missing' }, ['juejin']),
+      row('b', '需归档 B', { juejin: 'missing' }, ['juejin']),
+      row('c', '需归档 C', { juejin: 'missing' }, ['juejin']),
+    ]
+    data.summary.jjNotPub = 3
+    fs.mkdirSync(path.join(dir, 'src/data'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'src/data/articlePublish.json'), JSON.stringify(data))
+    const out = withEnv({ LIFE_DASH_DIR: dir, WORDPRESS_TOOLS_DIR: null }, () => pendingHeadline())
+    assert.match(out, /掘金待办 3 篇（可直接建草稿 0 篇 · 缺本地稿\/未归档 3 篇）/)
+    assert.match(out, /需归档 A/)
+    assert.match(out, /不是「待建草稿」/)
+    // No data source -> no invented numbers.
+    const none = fs.mkdtempSync(path.join(os.tmpdir(), 'rl-pending-none-'))
+    try {
+      const empty = withEnv({ LIFE_DASH_DIR: none, WORDPRESS_TOOLS_DIR: null }, () => pendingHeadline())
+      assert.equal(empty, '')
+    } finally {
+      fs.rmSync(none, { recursive: true, force: true })
+    }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

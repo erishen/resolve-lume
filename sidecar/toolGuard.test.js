@@ -54,6 +54,39 @@ test('a changed argument is not a repeat', () => {
   assert.equal(G.check('hot-news', { topic: 'x', provider: 'free' }), null)
 })
 
+// 2026-11-12: an empty publishing queue is a SUCCESS, so the old failure-only
+// guard let the model re-run juejin-draft({}) four times and ask about --force.
+test('an empty queue result makes the identical retry terminal', () => {
+  G._reset()
+  const empty = { result: '> [QUEUE_EMPTY] 掘金草稿 完成：队列为空，本轮没有可处理的文章。' }
+  assert.equal(G.check('juejin-draft', {}), null)
+  G.record('juejin-draft', {}, empty)
+  const refusal = G.check('juejin-draft', {})
+  assert.match(refusal, /队列为空/)
+  assert.match(refusal, /不要加 --force/)
+  assert.match(refusal, /结束本轮/)
+})
+
+test('a real draft creation stays repeatable (user may ask for several)', () => {
+  G._reset()
+  G.record('juejin-draft', {}, { result: '> 掘金草稿 完成\n  ✅ 草稿 draft_id = 123' })
+  assert.equal(G.check('juejin-draft', {}), null)
+})
+
+test('a fresh success clears the empty-queue refusal', () => {
+  G._reset()
+  G.record('juejin-draft', {}, { result: '> [QUEUE_EMPTY] 队列为空' })
+  assert.ok(G.check('juejin-draft', {}))
+  G.record('juejin-draft', {}, { result: '> 掘金草稿 完成\n  ✅ 草稿 draft_id = 456' })
+  assert.equal(G.check('juejin-draft', {}), null)
+})
+
+test('the empty-queue marker only affects the five queue tools', () => {
+  G._reset()
+  G.record('echo', {}, { result: '> [QUEUE_EMPTY] quoted for documentation' })
+  assert.equal(G.check('echo', {}), null)
+})
+
 test('runPseTask rejects a framework name used as provider before spawning', async () => {
   const r = await H.runPseTask({
     tool: 'hot-news',

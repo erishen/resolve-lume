@@ -92,6 +92,12 @@ test('discipline states the zero-arg queue-tool contract', () => {
   assert.match(TOOL_DISCIPLINE, /严禁用 read-file \/ shell \/ make 去找 Makefile/)
   assert.match(TOOL_DISCIPLINE, /草稿=已发/)
   assert.match(TOOL_DISCIPLINE, /不要自动追加 juejin-publish/)
+  // 2026-11-12 second incident: an empty queue was read as "3 drafts left",
+  // then retried 4x with --force suggested to the user.
+  assert.match(TOOL_DISCIPLINE, /articles\/juejin 里下一篇/)
+  assert.match(TOOL_DISCIPLINE, /队列为空/)
+  assert.match(TOOL_DISCIPLINE, /严禁 --force/)
+  assert.match(TOOL_DISCIPLINE, /不等于 N 篇待建草稿/)
 })
 
 test('publish intent needs explicit, non-negated user wording', () => {

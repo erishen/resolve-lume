@@ -598,7 +598,7 @@
     },
     {
       "name": "build-juejin",
-      "description": "零参数·自动扫全队列：构建掘金副本。调用 wordpress-tools 的 `make build-juejin`，遍历 articles/zh 为「还没有 articles/juejin 副本」的文章生成掘金版 md（正文取自 zh 干净源，保留 juejin frontmatter/footer/FAQ），不调掘金接口、不需要 cookie。建完再调用 juejin-draft 建草稿。⚠️ 不要传 project、不要问用户选哪篇；每次调用处理队列中所有缺副本的文章。只对 articles/zh 里的文章有效；仍留在 pse/zh 的稿需先发布+归档（make archive）才会被覆盖。",
+      "description": "零参数·自动扫全队列：构建掘金副本。调用 wordpress-tools 的 `make build-juejin`，遍历 articles/zh 为「还没有 articles/juejin 副本」的文章生成掘金版 md（正文取自 zh 干净源，保留 juejin frontmatter/footer/FAQ），不调掘金接口、不需要 cookie。⚠️ 不要传 project、不要问用户选哪篇；每次调用处理队列中所有缺副本的文章。只对 articles/zh 里的文章有效；仍留在 pse/zh 的稿需先发布+归档（make archive）才会被覆盖。是否接着建草稿由用户在当前消息里明确决定；不要因为 juejin-draft 返回空队列就自动调用本工具「补救」。",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -609,7 +609,7 @@
     },
     {
       "name": "juejin-draft",
-      "description": "零参数·自动取队列下一篇：建掘金草稿。当前口径「草稿=已发」（同公众号）——建完未发清单会自动把它标为已发并缩短队列，不需要再调 juejin-publish。调用 wordpress-tools 的 `make juejin-draft`，为下一篇未建草稿的文章创建掘金草稿并写回 juejin_draft_id，每次只处理一篇。⚠️ 严禁传 project、严禁问用户选文章、严禁用 shell/read-file 找脚本；要连续建多篇就重复调用本工具。需要 wordpress-tools/.env 中的掘金 cookie。",
+      "description": "零参数·自动取队列下一篇：建掘金草稿。当前口径「草稿=已发」（同公众号）——建完未发清单会自动把它标为已发并缩短队列，不需要再调 juejin-publish。调用 wordpress-tools 的 `make juejin-draft`，只处理 articles/juejin 目录里「已有掘金本地稿、且没有 juejin_draft_id」的下一篇，每次一篇。⚠️ 严禁传 project、严禁问用户选文章、严禁用 shell/read-file 找脚本。仅在用户明确要求连续建多篇时才重复调用；若工具明确返回「队列为空」，说明当前没有候选，必须如实转达并结束：严禁重试、严禁 --force、严禁改调 capabilities / build-juejin / publish-pending 补救。注意：未发清单里的「掘金 N 篇待办」是缺掘金本地稿/尚未发布的文章，不等于 N 篇待建草稿，它们不在本工具的候选集里。需要 wordpress-tools/.env 中的掘金 cookie。",
       "parameters": {
         "type": "object",
         "properties": {},

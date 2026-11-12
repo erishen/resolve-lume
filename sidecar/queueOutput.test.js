@@ -3,8 +3,17 @@
 // per article (56 of them) before acting on a single one. The full trace made
 // the model answer "没有未建草稿的文章可供再创建" right after the draft had
 // been created (juejin_draft_id written back). Pin the summary contract.
+//
+// Second incident, same day: make juejin-draft prints `✅ 全部已发布，无需操作。`
+// (publish-juejin.mjs:473) when every candidate is skipped. The old filter
+// dropped that verdict (it shared a block with a ⏭ line) and appended 2 KB of
+// raw skips. The model then invented "56 skipped but 3 drafts still pending",
+// called four more tools and asked the user whether to retry with --force.
+// Both the real script wording and the success/empty distinction are pinned.
 const assert = require('node:assert/strict')
-const { summarizeQueueOutput, QUEUE_TASKS } = require('./queueOutput')
+const fs = require('node:fs')
+const path = require('node:path')
+const { summarizeQueueOutput, QUEUE_TASKS, QUEUE_EMPTY_MARKER } = require('./queueOutput')
 
 const cases = []
 function test(name, fn) { cases.push([name, fn]) }
@@ -29,15 +38,40 @@ test('drops skipped blocks but keeps the created-draft conclusion', () => {
   assert.match(out, /已记录 juejin_draft_id/)
   assert.match(out, /剩余未建草稿 0 篇/)
   assert.match(out, /resolve_lume-zh\.md/)
+  assert.doesNotMatch(out, /\[QUEUE_EMPTY\]/, 'a created draft is NOT an empty queue')
   assert.ok(out.length < 1500, `summary is still ${out.length} chars`)
 })
 
-test('keeps the "nothing pending" verdict when every block is a skip', () => {
-  const raw = SKIPS + '\n没有待发布（全部已有 juejin_draft_id）\n   剩余未建草稿 0 篇'
+// `剩余未建草稿 0 篇` is printed after a SUCCESSFUL run too. Never let it turn
+// a real draft creation into "nothing to do".
+test('剩余 0 篇 after real work is still reported as success', () => {
+  const raw = '====================\n文件 : a-zh.md\n标题 : A\n' +
+    '  ✅ 草稿 draft_id = 12345\n\n✅ 本次处理 1 篇（草稿）。\n   剩余未建草稿 0 篇 → 再跑一次继续下一篇。'
   const out = summarizeQueueOutput('掘金草稿', raw)
-  assert.doesNotMatch(out, /⏭/)
-  assert.match(out, /没有待发布/)
+  assert.match(out, /草稿 draft_id = 12345/)
   assert.match(out, /剩余未建草稿 0 篇/)
+  assert.doesNotMatch(out, /\[QUEUE_EMPTY\]/)
+})
+
+test('the real empty-queue verdict is promoted, not buried in raw skips', () => {
+  // Exactly what `make juejin-draft` prints when all 56 candidates have an id.
+  const raw = SKIPS + '\n\n⏭ 56 篇已发布，跳过（--force 可重发）。\n✅ 全部已发布，无需操作。'
+  const out = summarizeQueueOutput('掘金草稿', raw)
+  assert.match(out, new RegExp(QUEUE_EMPTY_MARKER.replace(/[[\]]/g, '\\$&')))
+  assert.match(out, /队列为空/)
+  assert.match(out, /口径说明/)
+  assert.match(out, /不等于「N 篇待建草稿」/)
+  assert.match(out, /不要加 --force/)
+  assert.match(out, /不要用相同参数重试/)
+  assert.doesNotMatch(out, /⏭/, 'no raw skip trace may reach the model')
+  assert.doesNotMatch(out, /原始输出尾部/)
+  assert.ok(out.length < 1600, `empty-queue answer is ${out.length} chars`)
+})
+
+test('an unrecognised no-work output is also treated as an empty queue', () => {
+  const out = summarizeQueueOutput('掘金草稿', SKIPS)
+  assert.match(out, /队列为空/)
+  assert.doesNotMatch(out, /原始输出尾部/)
 })
 
 test('a real failure is never filtered into an empty cheerful summary', () => {
@@ -45,6 +79,29 @@ test('a real failure is never filtered into an empty cheerful summary', () => {
   const out = summarizeQueueOutput('掘金草稿', raw)
   assert.match(out, /error: cookie 已失效/)
   assert.match(out, /原始输出尾部/)
+  assert.doesNotMatch(out, /\[QUEUE_EMPTY\]/)
+})
+
+test('the live pending snapshot is attached to an empty queue answer', () => {
+  const raw = SKIPS + '\n✅ 全部已发布，无需操作。'
+  const line = '当前未发清单快照：掘金待办 3 篇（可直接建草稿 0 篇 · 缺本地稿/未归档 3 篇）。'
+  const out = summarizeQueueOutput('掘金草稿', raw, line)
+  assert.match(out, /当前未发清单快照/)
+  assert.match(out, /缺本地稿\/未归档 3 篇/)
+  assert.match(out, /不要建议用户重试或再次调用本工具/)
+  assert.doesNotMatch(out, /原始输出尾部/)
+})
+
+test('an empty queue never re-runs the life-dash generator', () => {
+  // No id was written back, so resyncPendingList would only rewrite the user's
+  // articlePublish.{json,ts} for no reason. Pin the early return.
+  const src = fs.readFileSync(path.join(__dirname, 'business-publish.js'), 'utf8')
+  assert.match(src, /if \(summary\.includes\(QUEUE_EMPTY_MARKER\)\) return summary/)
+  assert.match(src, /summarizeQueueOutput\(label, combined, pendingHeadline\(\)\)/)
+})
+
+test('the marker is stable and ASCII (toolGuard matches it literally)', () => {
+  assert.equal(QUEUE_EMPTY_MARKER, '[QUEUE_EMPTY]')
 })
 
 test('exactly the five queue-driven targets are summarised', () => {
