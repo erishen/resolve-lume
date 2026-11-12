@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+import reactRoute from './react-route.cjs'
 
 // Dev-mode proxy. The production frontend is a Node server inside the compose
 // frontend container (:18085) that injects X-Sidecar-Token itself. Vite has no
@@ -54,7 +55,26 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
-    plugins: [react()],
+    plugins: [
+      react(),
+      // Dev parity with server-entrypoint.mjs: the /react proxy is for static
+      // demo pages only. Without this, `npm run dev` would let the browser
+      // bypass the per-task tool allow-list via /react/api/chat|tools/call.
+      {
+        name: 'block-direct-backend-api',
+        configureServer(server) {
+          server.middlewares.use((req, res, next) => {
+            if (!reactRoute.reactPathIsPublic(req.url)) {
+              res.statusCode = 403
+              res.setHeader('Content-Type', 'text/plain')
+              res.end('Forbidden: direct backend API is disabled')
+              return
+            }
+            next()
+          })
+        },
+      },
+    ],
     envDir: ROOT,
     server: {
       port: 5173,

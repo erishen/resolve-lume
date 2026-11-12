@@ -4,6 +4,7 @@ import path from 'path';
 import http from 'http';
 import { createHash } from 'crypto';
 import { novncUpstreamPath } from './novnc-route.mjs';
+import reactRoute from './react-route.cjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -217,6 +218,14 @@ const server = http.createServer((req, res) => {
   if (req.url.startsWith('/api/')) {
     proxyRequest(req, res, sidecarUrl);
   } else if (req.url.startsWith('/react/')) {
+    // `/react/api/*` is agent-httpd's control surface. Relaying it would let a
+    // browser call /react/api/tools/call or start an unscoped /react/api/chat,
+    // bypassing the per-request tool allow-list that agent.c now enforces.
+    // Only the sidecar talks to those endpoints (directly, on the compose net).
+    // Static /react demo pages are still relayed.
+    if (!reactRoute.reactPathIsPublic(req.url)) {
+      return reject(req, res, 'direct backend API is disabled');
+    }
     proxyRequest(req, res, backendUrl);
   } else if (novncUpstreamPath(req.url) !== null) {
     // 桌面 tab: /novnc/* -> browser-desk's noVNC root (websockify on 6080).

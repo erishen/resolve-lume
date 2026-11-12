@@ -28,6 +28,13 @@ export interface ExampleItem {
    * Hand-authored workflow cards (PSE / article-ops / skills) leave it unset.
    */
   tool?: string
+  /**
+   * Soul/task id this card belongs to. Skill cards set it so picking one pins
+   * that task instead of letting a fuzzy Chinese-keyword matcher pick a
+   * different soul (whose hard tool allow-list would then refuse the card's
+   * tools). Hand-authored workflow cards leave it unset.
+   */
+  task?: string
 }
 
 export const CATEGORY_LABELS: Record<ExampleCategory, string> = {
@@ -188,38 +195,40 @@ const MCP_EXAMPLES: Record<string, { title: string; prompt: string; category: Ex
   },
 }
 
+// PSE roles are prompt fragments, not tasks: /api/tasks does not list them, so
+// a card pinning one would send a task id the sidecar cannot resolve.
+const PSE_ROLE_SOULS = new Set(['planner', 'specialist', 'evaluator'])
+
 function skillExample(s: SkillInfo): ExampleItem | null {
-  if (INTERNAL_TASK_SOULS.has(s.name)) return null
-  const blob = (s.name + ' ' + (s.description ?? '')).toLowerCase()
-  let prompt: string
+  if (INTERNAL_TASK_SOULS.has(s.name) || PSE_ROLE_SOULS.has(s.name)) return null
+  const desc = String(s.description ?? '').trim()
+  const blob = (s.name + ' ' + desc).toLowerCase()
   let category: ExampleCategory = 'other'
-  // Investment / finance skills take priority over generic "review" matching.
+  // Category heuristics only. The PROMPT used to be a generic line derived
+  // from these same regexes ("完成文章相关的操作（写文章、发布、评论等）"),
+  // which auto-matched article-write for hot-news-post / post-comment /
+  // tech-comment-draft, code-review for deep-review / rust-review, and devstats
+  // for specialist. `/api/skills` now returns the real frontmatter description,
+  // so use it verbatim and pin the task explicitly instead.
   if (/invest|portfolio|stock|asset|finance|wealth|weekly.*review|投资|持仓|资产/.test(blob)) {
-    prompt = `请使用 ${s.name} 技能，生成一份投资组合分析或周度复盘报告。`
     category = 'invest'
   } else if (/article|post|comment|blog|publish|draft|文章|评论|发布|草稿|写作/.test(blob)) {
-    prompt = `请使用 ${s.name} 技能，完成文章相关的操作（写文章、发布、评论等）。`
     category = 'article'
   } else if (/review|audit|lint/.test(blob)) {
-    prompt = `请使用 ${s.name} 技能，对当前改动做一次审查，并给出可落地的改进建议。`
     category = 'code'
-  } else if (/research|investigat|survey|search/.test(blob)) {
-    prompt = `请使用 ${s.name} 技能，调研相关主题并整理出结论与参考。`
-  } else if (/summar/.test(blob)) {
-    prompt = `请使用 ${s.name} 技能，总结指定内容的要点。`
-  } else if (/generat|create|build|write|draft/.test(blob)) {
-    prompt = `请使用 ${s.name} 技能，帮我生成所需的内容或代码。`
+  } else if (/generat|create|build|write|draft|fix|debug|repair|resolve|explain|analy/.test(blob)) {
     category = 'code'
-  } else if (/fix|debug|repair|resolve/.test(blob)) {
-    prompt = `请使用 ${s.name} 技能，定位并修复存在的问题。`
-    category = 'code'
-  } else if (/explain|analy/.test(blob)) {
-    prompt = `请使用 ${s.name} 技能，分析并解释其中的原理。`
-    category = 'code'
-  } else {
-    prompt = `请使用 ${s.name} 技能完成相关任务。`
   }
-  return { id: 'skill:' + s.name, title: titleFor(s.name), prompt, category }
+  const prompt = desc
+    ? `请使用 ${s.name} 技能：${desc}`
+    : `请使用 ${s.name} 技能完成相关任务。`
+  return {
+    id: 'skill:' + s.name,
+    title: s.title || titleFor(s.name),
+    prompt,
+    category,
+    task: s.name,
+  }
 }
 
 function toolExample(t: ToolSchema): ExampleItem | null {
@@ -845,6 +854,10 @@ export function filterExamplesForTask(
   const out: Record<ExampleCategory, ExampleItem[]> = { ...grouped }
   for (const cat of Object.keys(out) as ExampleCategory[]) {
     out[cat] = out[cat].filter((ex) => {
+      // A skill card belongs to exactly one soul: when a task is pinned, keep
+      // only that task's own skill card (many task ids have no TASK_CATEGORIES
+      // entry, so the category fallback below would otherwise hide them all).
+      if (ex.task) return ex.task === task.id
       if (ex.tool) {
         if (GENERIC_CORE_TOOLS.has(ex.tool)) return false
         return task.includeTools!.some((p) => ex.tool!.startsWith(p))

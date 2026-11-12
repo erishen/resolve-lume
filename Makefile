@@ -266,27 +266,12 @@ peer-serve: peer-check
 
 # 网关答案组装回归测试：纯 Node，无外部依赖，不触碰运行中的服务。
 # 断言「工具调用前的中间话 / PSE 计划与评审」不会拼进最终答案。
+# Glob, not a hand-maintained list: 2026-11-12 audit found 5 of 25 test files
+# were never wired in (one of them, shellAllow.test.js, had been FAILING all
+# along). A new sidecar/*.test.js is now picked up automatically.
 test-gateway:
-	@node sidecar/translateFrame.test.js
-	@node sidecar/articleFrontmatter.test.js
-	@node sidecar/toolContract.test.js
-	@node sidecar/security.test.js
-	@node sidecar/consistency.test.js
-	@node sidecar/queueOutput.test.js
-	@node sidecar/publishPending.test.js
-	@node sidecar/progress.test.js
-	@node sidecar/toolGuard.test.js
-	@node sidecar/chatBody.test.js
-	@node sidecar/toolCatalog.test.js
-	@node sidecar/taskMatch.test.js
-	@node sidecar/cardRoute.test.js
-	@node sidecar/souls.test.js
-	@node sidecar/sessionTitle.test.js
-	@node sidecar/articleArchiveNumbering.test.js
-	@node sidecar/approval.test.js
-	@node sidecar/desktop-desk.test.js
-	@node sidecar/devstats-digest.test.js
-	@node sidecar/stats-csv.test.js
+	@for f in sidecar/*.test.js; do node "$$f" || { echo "✗ $$f"; exit 1; }; done
+	@echo "✓ sidecar/*.test.js 全部通过"
 
 # 前端回归：Node >= 22.6 原生剥 TS 类型，零依赖、不碰运行中的服务。
 #  - export: 会话 Markdown / 单条复制 / JSON / job 日志都不带出主目录与密钥
@@ -294,7 +279,9 @@ test-gateway:
 frontend-test:
 	@node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON frontend/src/export.test.mjs
 	@node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON frontend/src/api.test.mjs
+	@node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON frontend/examples.test.mjs
 	@node frontend/novnc-route.test.mjs
+	@node frontend/react-route.test.mjs
 
 # 前端类型 + 生产构建（需要 frontend/node_modules，先 npm install）。
 frontend-build-check:

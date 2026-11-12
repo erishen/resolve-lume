@@ -101,7 +101,7 @@ interface MessageListProps {
   messages: UIMessage[]
   onDecide?: (callId: string, decision: 'approve' | 'reject') => void
   examples?: GroupedExamples
-  onPickExample?: (prompt: string) => void
+  onPickExample?: (prompt: string, task?: string) => void
   /** Business tasks for the "从任务开始" quick-start row in the empty state. */
   tasks?: { id: string; name: string; description?: string }[]
   /** Currently pinned task id, or null for auto. */
@@ -245,7 +245,7 @@ export function MessageList({
                           key={ex.id}
                           type="button"
                           className="example-card"
-                          onClick={() => onPickExample?.(ex.prompt)}
+                          onClick={() => onPickExample?.(ex.prompt, ex.task)}
                         >
                           <span className="example-title">{ex.title}</span>
                           <span className="example-prompt">{ex.prompt}</span>
@@ -372,7 +372,7 @@ export function MessageList({
                             key={ex.id}
                             type="button"
                             className="example-card"
-                            onClick={() => onPickExample(ex.prompt)}
+                            onClick={() => onPickExample(ex.prompt, ex.task)}
                           >
                             <span className="example-title">{ex.title}</span>
                             <span className="example-prompt">{ex.prompt}</span>

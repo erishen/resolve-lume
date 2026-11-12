@@ -18,6 +18,6 @@ COPY --from=build /app/dist .
 # `npm install http-proxy` was a dead dependency.
 # One COPY for all runtime sources: OrbStack's buildkit races on concurrent
 # context reads for multiple COPY lines (checksum mismatch), so keep it single.
-COPY package.json server-entrypoint.mjs novnc-route.mjs ./
+COPY package.json server-entrypoint.mjs novnc-route.mjs react-route.cjs ./
 EXPOSE 80
 CMD ["node", "server-entrypoint.mjs"]

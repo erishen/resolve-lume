@@ -49,6 +49,12 @@ test('other interpreters / scripts stay gated', () => {
     builtin.needsApproval('shell', { command: `python3 ${path.join(SOULS, 'code-review', 'scripts', 'other.py')}` }),
     true,
   )
-  assert.strictEqual(builtin.needsApproval('shell', { command: 'ls -la' }), true)
+  // `ls` is on READ_ONLY_PROGRAMS: a bare listing is deliberately unattended.
+  // This assertion used to expect `true` and was hidden because the file was
+  // never wired into `make check`; keep it honest about the current policy.
+  assert.strictEqual(builtin.needsApproval('shell', { command: 'ls -la' }), false)
+  // A program outside that whitelist must still ask, as must a missing command.
+  assert.strictEqual(builtin.needsApproval('shell', { command: 'curl https://example.com' }), true)
+  assert.strictEqual(builtin.needsApproval('shell', { command: 'node -e "process.exit(0)"' }), true)
   assert.strictEqual(builtin.needsApproval('shell', {}), true)
 })

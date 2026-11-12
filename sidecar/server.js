@@ -37,6 +37,7 @@ const { renderToolCatalog, enrichToolDescriptions } = require('./toolCatalog')
 const { matchTaskByMessage } = require('./taskMatch')
 const { taskCopy, SCOPES, renderSoulPrompt } = require('./taskCopy')
 const { sessionTitle } = require('./sessionTitle')
+const { scanSkills: scanSkillsDir } = require('./skills')
 const desk = require('./desktop-desk')
 
 // Human-approval set lives in builtin-exec (single source of truth, shared with
@@ -753,25 +754,11 @@ async function getToolCatalogText(allowList) {
 }
 
 // ---------- skills: scan souls dir for SOUL.md ----------
+// Delegated to sidecar/skills.js so the frontmatter parser is unit-testable.
+// The old inline version returned the literal `---` for every soul with
+// frontmatter, which is why skill cards had generic prompts and mis-routed.
 function scanSkills() {
-  const out = []
-  try {
-    const names = fs.readdirSync(SOULS_DIR)
-    for (const name of names) {
-      const soulPath = path.join(SOULS_DIR, name, 'SOUL.md')
-      if (!fs.existsSync(soulPath)) continue
-      const txt = fs.readFileSync(soulPath, 'utf8')
-      // first non-empty, non-# line as description
-      const desc = txt
-        .split('\n')
-        .map((l) => l.trim())
-        .find((l) => l && !l.startsWith('#'))
-      out.push({ name, description: desc || '' })
-    }
-  } catch {
-    /* souls dir missing */
-  }
-  return out
+  return scanSkillsDir(SOULS_DIR)
 }
 
 // ---------- jobs: background PSE/chat run with event log ----------

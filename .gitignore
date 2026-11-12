@@ -32,6 +32,14 @@ frontend/server-entrypoint.cjs
 .data/buildx/
 # A2A peer registry(本节点准入哪些对端, 含 PEER_ROOT 派生身份, 勿进仓)
 .data/peers-identity.json
+# 本地审计/探针的临时产物（live-*.json、examples.cjs、*.sse 等）。之前只逐条
+# 列了 sessions/buildx，一次全量卡片审计就让 `git status` 冒出 ?? .data/。
+.data/*.json
+.data/*.cjs
+.data/*.sse
+.data/*.err
+.data/*.txt
+.data/*.log
 
 # 宿主 sidecar 的运行时数据（sessions/jobs/mcp 状态、pid、日志）
 .data-sidecar/

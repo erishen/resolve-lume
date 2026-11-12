@@ -17,6 +17,8 @@ import type {
 /** A skill exposed by the runtime. */
 export interface SkillInfo {
   name: string
+  /** Business-facing Chinese card title from the task registry. */
+  title?: string
   description: string
 }
 

@@ -152,3 +152,37 @@ test('internal task souls no longer produce generic skill cards', () => {
     assert.match(src, new RegExp(`'${id}'`), `${id} must stay in the filter set`)
   }
 })
+
+// 2026-11-12 fifth-round audit: 6 of 17 skill cards auto-matched another soul
+// (hot-news-post / post-comment / tech-comment-draft -> article-write,
+// deep-review / rust-review -> code-review, specialist -> devstats). Pinning
+// the task on pick is the fix; keep the whole wiring chain under one gate.
+test('skill cards pin their own task end to end', () => {
+  const src = fs.readFileSync(EXAMPLES, 'utf8')
+  assert.match(src, /PSE_ROLE_SOULS/, 'PSE role souls have no task id and must be filtered')
+  assert.match(src, /task: s\.name/, 'skill cards must declare their soul id')
+  assert.match(src, /title: s\.title \|\| titleFor\(s\.name\)/,
+    'skill cards must show the registry Chinese name, not the slug')
+  assert.match(src, /if \(ex\.task\) return ex\.task === task\.id/,
+    'a pinned task must keep its own skill card')
+  const msg = fs.readFileSync(path.join(ROOT, 'frontend/src/MessageList.tsx'), 'utf8')
+  assert.equal((msg.match(/onPickExample\?\.\(ex\.prompt, ex\.task\)/g) || []).length, 1)
+  assert.equal((msg.match(/onPickExample\(ex\.prompt, ex\.task\)/g) || []).length, 1)
+  const app = fs.readFileSync(path.join(ROOT, 'frontend/src/App.tsx'), 'utf8')
+  assert.match(app, /if \(task\) chat\.setTask\(task\)/, 'picking a card must pin the task')
+})
+
+test('every soul exposed as a skill card is a real task with a tool allow-list', () => {
+  const src = fs.readFileSync(EXAMPLES, 'utf8')
+  const block = src.match(/const INTERNAL_TASK_SOULS = new Set\(\[([\s\S]*?)\]\)/)
+  assert.ok(block, 'INTERNAL_TASK_SOULS block not found')
+  const internal = new Set([...block[1].matchAll(/'([\w-]+)'/g)].map((m) => m[1]))
+  const pinned = new Set(['planner', 'specialist', 'evaluator'])
+  for (const id of fs.readdirSync(SOULS)) {
+    const file = path.join(SOULS, id, 'SOUL.md')
+    if (!fs.existsSync(file) || pinned.has(id) || internal.has(id)) continue
+    const fm = frontmatter(file)
+    assert.ok(fm, `${id} has no frontmatter -> /api/tasks cannot serve it`)
+    assert.ok((fm.tools || '').trim(), `${id} has no tools: allow-list; pinning it would expose nothing`)
+  }
+})

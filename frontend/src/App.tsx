@@ -709,8 +709,12 @@ export function App() {
                       : '用默认模型重新运行刚才的工具并给出结论。'
                     void chat.send(instruction)
                   }}
-                  onPickExample={(p) => {
+                  onPickExample={(p, task) => {
                     setDraft(p)
+                    // A skill card IS a task. Pin it so the server uses that
+                    // soul's system prompt + tool allow-list instead of fuzzy
+                    // intent matching (which routed 6 of 17 cards elsewhere).
+                    if (task) chat.setTask(task)
                     composerRef.current?.focus()
                   }}
                 />
