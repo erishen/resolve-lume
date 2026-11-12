@@ -165,6 +165,15 @@ export function MessageList({
   useEffect(() => {
     const el = listRef.current
     if (!el) return
+    // 空状态（New Chat 示例区）：刷新 / 打开会话必须停在最顶部。
+    // 不能贴底——否则会把示例区滚到底部；也不能依赖 flex 居中（内容高于
+    // 视口时顶部会被裁掉、无法滚到开头，正是「刷新停在示例中间」的根因）。
+    if (messages.length === 0) {
+      stickToBottom.current = true
+      lastCount.current = 0
+      el.scrollTop = 0
+      return
+    }
     if (messages.length !== lastCount.current) {
       lastCount.current = messages.length
       stickToBottom.current = true
@@ -181,7 +190,11 @@ export function MessageList({
   }
 
   return (
-    <div className="message-list" ref={listRef} onScroll={handleListScroll}>
+    <div
+      className={`message-list${messages.length === 0 ? ' empty' : ''}`}
+      ref={listRef}
+      onScroll={handleListScroll}
+    >
       {messages.length === 0 && (
         <div className="empty-state">
           <div className="empty-title">想试试这个 Agent？挑一个问题开始</div>

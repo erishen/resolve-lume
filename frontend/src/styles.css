@@ -831,8 +831,18 @@ body {
   gap: 14px;
 }
 
+/* 空状态（New Chat 示例区）的居中：
+ * 用 ::before/::after 两个 flex:1 弹性 spacer 把 .empty-state 夹在中间——
+ * 内容矮于视口时两端均分剩余空间 → 垂直居中；内容高于视口时 spacer 收缩为 0
+ * → 顶对齐且整块可滚动到最开头（不会出现 flex `margin:auto` 居中时顶部被裁、
+ * 刷新停在示例区中间的毛病）。不依赖 `safe` 关键字，全浏览器安全。 */
+.message-list.empty::before,
+.message-list.empty::after {
+  content: '';
+  flex: 1 1 0;
+}
+
 .empty-state {
-  margin: auto;
   width: 100%;
   max-width: 600px;
   display: flex;
