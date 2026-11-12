@@ -55,11 +55,11 @@ const APPROVAL_RULES = new Map([
   ['browser-screenshot', () => true],
   ['article-archive', () => true],
   ['article-publish', (a) => !!a && a.confirm === true],
-  ['juejin-draft', () => true],
+  // 真正「公开上线」的对外部副作用保留人工护栏；建草稿/本地构建类已放开
+  // （按 2026-11-12 决策：juejin-draft / wechat-draft / build-juejin 改走
+  // builtin-tools.json 的 needsApproval:false，不再每次弹批准）。
   ['juejin-publish', () => true],
-  ['wechat-draft', () => true],
   ['sf-pw-publish', () => true],
-  ['build-juejin', () => true],
 ])
 // Names that MAY be gated (union of schema flag + rules), used by the panel to
 // flag cards. Runtime decisions go through needsApproval(name, args).
