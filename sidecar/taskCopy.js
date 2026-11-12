@@ -18,6 +18,11 @@ const TASK_COPY = {
     description:
       '扫描 github 项目、用 crewai-pse 三角色流水线生成中英双语技术文章草稿、校验并发布到 WordPress（掘金/思否/微信草稿）。',
   },
+  'publish-inventory': {
+    name: '各平台未发清单',
+    description:
+      '只读汇总掘金 / 思否 / 公众号 / 英文稿 / WP 还没发出去的文章与每篇下一步；只列清单，不执行任何发布动作。',
+  },
   'publish-dispatch': {
     name: '平台草稿与发布队列',
     description:

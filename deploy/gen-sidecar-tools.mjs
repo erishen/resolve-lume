@@ -58,7 +58,7 @@ const DEFAULT_ALLOW = [
   'doc-library-search', 'photo-duplicates', 'video-library-list', 'privacy-audit',
   'stock-scan', 'dev-stats', 'hot-news', 'hot-news-fetch', 'hot-news-topics',
   'hot-news-check',   'article-discover', 'article-validate', 'article-write',
-  'article-publish',
+  'article-publish', 'publish-pending',
   'skill-run', 'pick-post', 'resume-tailor', 'interview-questions', 'system-info',
   'capabilities',
   'portfolio-check', 'pse-review', 'pse-review-latest',
@@ -157,6 +157,11 @@ const DESC_OVERRIDE = {
     'ZERO-ARG queue tool (external side effect): create the WeChat MP draft for the NEXT unpublished article. Draft counts as sent, same as Juejin: life-dash marks it sent and shortens the queue. Human approval required. Never pass a project, never list candidates.',
   'sf-pw-publish':
     'ZERO-ARG queue tool (external, irreversible): publish to SegmentFault via Playwright, automatically picks the NEXT unpublished article. Human approval required; explicit user request only. Never pass a project; do not search for scripts.',
+  // The read-only sibling. The 2026-11-12 "各平台未发清单" card had NO backend
+  // tool at all, so the model wandered off to read-file/article-write. Keep the
+  // "query != execute" distinction in the FIRST sentence (desc is truncated).
+  'publish-pending':
+    'ZERO-ARG READ-ONLY tool: list articles still unpublished per platform (Juejin/SegmentFault/WeChat/EN/WP), with the next command for each. Use for "what is still pending / next steps". Never publishes or writes anything; no approval needed. NEVER scan article dirs with read-file/shell, NEVER use article-write/article-publish. To actually advance the queue use juejin-draft / wechat-draft / sf-pw-publish.',
   'hot-news-publish':
     '[APPROVAL][EXTERNAL] Publish a hot-news draft. For generating copy use hot-news; for a pre-flight check use hot-news-check. Needs approval; explicit publish request only.',
   'capabilities':

@@ -1,6 +1,6 @@
 ---
 name: 平台草稿与发布队列
-description: 执行建掘金草稿、建公众号草稿、发布到思否、掘金草稿上线等由未发清单队列驱动的动作。相关工具全部零参数，每次自动取队列中的下一篇，不需要用户选项目或选文章。
+description: 执行建掘金草稿、建公众号草稿、发布到思否、掘金草稿上线等由未发清单队列驱动的动作。相关工具全部零参数，每次自动取队列中的下一篇，不需要用户选项目或选文章；只查清单请用「各平台未发清单」任务。
 triggers: 建掘金草稿, 掘金草稿, 未建草稿, 草稿=已发, 下一篇, 掘金建稿, 掘金草稿上线, 草稿上线, 建公众号草稿, 公众号草稿, 微信草稿, 发布到思否, 思否发布, juejin-draft, juejin-publish, wechat-draft, sf-pw-publish, build-juejin
 tools: sidecar__build-juejin, sidecar__juejin-draft, sidecar__juejin-publish, sidecar__wechat-draft, sidecar__sf-pw-publish, sidecar__capabilities
 ---

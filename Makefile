@@ -273,6 +273,7 @@ test-gateway:
 	@node sidecar/security.test.js
 	@node sidecar/consistency.test.js
 	@node sidecar/queueOutput.test.js
+	@node sidecar/publishPending.test.js
 	@node sidecar/progress.test.js
 	@node sidecar/toolGuard.test.js
 	@node sidecar/chatBody.test.js

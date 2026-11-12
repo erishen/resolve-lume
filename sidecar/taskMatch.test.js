@@ -97,6 +97,63 @@ test('publish-dispatch soul states the zero-arg / draft=published contract', () 
   assert.match(body, /不要自动追加调用 `juejin-publish`/)
 })
 
+const PENDING_CARDS = [
+  '帮我列出掘金、思否、公众号、英文稿各平台还有哪些文章没发出去，以及每个下一步该做什么。',
+  '帮我看一下各平台未发清单',
+  'publish-pending 一下，看看哪些文章还没发',
+  '还有哪些文章没发？下一步该做什么',
+]
+
+test('every pending-list card lands on publish-inventory (card had no tool before)', () => {
+  for (const prompt of PENDING_CARDS) {
+    assert.equal(matched(prompt), 'publish-inventory', `mis-routed: ${prompt.slice(0, 36)}`)
+  }
+})
+
+test('queue/execute cards still land on publish-dispatch, not the read-only soul', () => {
+  for (const prompt of QUEUE_CARDS) {
+    assert.equal(matched(prompt), 'publish-dispatch', `mis-routed: ${prompt.slice(0, 36)}`)
+  }
+})
+
+test('list-query triggers do not steal writing / WP-list intents', () => {
+  assert.equal(matched('帮我写一篇技术文章，用 crewai-pse 三角色流水线生成。'), 'article-write')
+  assert.equal(
+    matched('请调用 article-publish 工具（不要传 project、也不要设 confirm）列出当前待发布到 WordPress 的文章清单供我选择。'),
+    'article-write',
+  )
+})
+
+test('publish-inventory exposes ONLY read-only tools (query cannot execute)', () => {
+  // On 2026-11-12 the inventory card shared a soul with the queue tools; the
+  // model saw juejin-draft, called it, and only the human approval gate stopped
+  // a real draft from being created on a pure query. Split the allow-list.
+  for (const id of ['publish-inventory', 'publish-dispatch']) {
+    const fm = frontmatter(path.join(SOULS_DIR, id, 'SOUL.md'))
+    assert.ok(fm && fm.tools, `${id} is missing its tools line`)
+  }
+  const inv = frontmatter(path.join(SOULS_DIR, 'publish-inventory', 'SOUL.md'))
+  const invTools = inv.tools.split(',').map((s) => s.trim()).filter(Boolean)
+  assert.ok(invTools.includes('sidecar__publish-pending'))
+  for (const n of [
+    'sidecar__juejin-draft', 'sidecar__juejin-publish', 'sidecar__wechat-draft',
+    'sidecar__sf-pw-publish', 'sidecar__build-juejin', 'sidecar__article-write',
+    'sidecar__shell', 'sidecar__make', 'sidecar__read-file',
+  ]) assert.ok(!invTools.includes(n), `inventory must NOT expose ${n}`)
+
+  const dispatch = frontmatter(path.join(SOULS_DIR, 'publish-dispatch', 'SOUL.md'))
+  const dispatchTools = dispatch.tools.split(',').map((s) => s.trim()).filter(Boolean)
+  assert.ok(dispatchTools.includes('sidecar__juejin-draft'))
+  assert.ok(!dispatchTools.includes('sidecar__publish-pending'), 'execute soul stays execute-only')
+
+  for (const f of ['SOUL.md', 'SKILL.md']) {
+    const body = fs.readFileSync(path.join(SOULS_DIR, 'publish-inventory', f), 'utf8')
+    assert.match(body, /没有任何写工具/)
+    assert.match(body, /不是让你执行的授权/)
+    assert.match(body, /严禁在最终答案里复述工具调用行/)
+  }
+})
+
 let failed = 0
 for (const [name, fn] of cases) {
   try {

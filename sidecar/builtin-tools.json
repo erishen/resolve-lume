@@ -762,6 +762,17 @@
       "needsApproval": false
     },
     {
+      "name": "publish-pending",
+      "description": "零参数·只读：列出掘金/思否/公众号/英文稿/WP 各平台「还没发出去」的文章与每篇下一步动作。查「各平台未发清单、还有哪些文章没发、下一步该做什么」时直接调用本工具，不要传参数、不要用 read-file/shell 自己扫目录、不要改用 article-write 或 article-publish。数据源是 life-dash 的 articlePublish.json（发布队列工具成功后自动重扫；也可 make export-pending 刷新），输出开头给汇总与数据快照时间，若原稿比快照新会显式提示滞后。⚠️ 本工具只读、不写、不进审批门，绝不执行任何发布动作；要真正推进队列请改用 juejin-draft / wechat-draft / sf-pw-publish 等对应工具（它们零参数、自动取下一篇）。",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "server": "builtin",
+      "needsApproval": false
+    },
+    {
       "name": "hot-news",
       "description": "Run the llamaindex-pse hot-news pipeline (Planner + Specialist + Evaluator + Verify) to generate compliant social-media copy for a hot topic. The pipeline builds a RAG index over the provided news directory (grounding source) so the copy is fact-anchored, then runs a deterministic compliance verify_fn every round (banned words by category / platform format limits / mandatory \"AI 辅助创作\" label / factual-claim-vs-news cross-check). Semantic edge cases go to the LLM evaluator (first round only). Supports Xiaohongshu / Douyin / Zhihu / Toutiao, and categories tech_ai (default, most lenient) through finance/medical (strictest). Returns the generated Markdown copy and save path. Use when the user asks to draft a Xiaohongshu/Douyin post about a trending topic. Default provider: the gateway configured in the PSE framework (free, no approval). Any explicitly chosen non-default provider (deepseek / scnet-kimi / scnet-minimax) is PAID and triggers a human approval prompt — wait for the user to approve before assuming it will run; if rejected, do NOT retry with a paid provider. Do NOT read any files before calling this tool — all paths and configs are handled internally.",
       "parameters": {

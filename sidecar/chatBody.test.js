@@ -66,6 +66,16 @@ test('discipline covers numbering, retries and the mandatory final summary', () 
   assert.match(TOOL_DISCIPLINE, /必须输出面向用户的中文文字总结/)
 })
 
+test('discipline separates a read-only pending-list query from publish actions', () => {
+  assert.match(TOOL_DISCIPLINE, /只调用一次零参数的 publish-pending/)
+  assert.match(TOOL_DISCIPLINE, /不是执行授权/)
+  assert.match(TOOL_DISCIPLINE, /严禁因此调用 juejin-draft/)
+  assert.match(TOOL_DISCIPLINE, /逐字取自工具输出/)
+  // A tool call written as literal text restarts the ReAct loop (2026-11-12).
+  assert.match(TOOL_DISCIPLINE, /严禁复述工具调用行或轮次标记/)
+  assert.match(TOOL_DISCIPLINE, /不复述调用语句/)
+})
+
 test('discipline forbids fake "small problem" scripts and unprompted publish', () => {
   assert.match(TOOL_DISCIPLINE, /严禁编造/)
   assert.match(TOOL_DISCIPLINE, /DeprecationWarning/)

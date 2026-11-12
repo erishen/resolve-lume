@@ -125,6 +125,10 @@ tool "article-publish", "[APPROVAL][EXTERNAL] Publish ONE article to WordPress (
   return sidecar_tool("article-publish", stringify(p));
 };
 
+tool "publish-pending", "ZERO-ARG READ-ONLY tool: list articles still unpublished per platform (Juejin/SegmentFault/WeChat/EN/WP), with the next command for each. Use for \"what is still pending / next steps\". Never publishes or writes anything; no approval needed. NEVER scan article dirs with read-file/shell, NEVER use article-write/article-publish. To actually advance the queue use juejin-draft / wechat-draft / sf-pw-publish.", {}, (p) => {
+  return sidecar_tool("publish-pending", stringify(p));
+};
+
 tool "skill-run", "Load a SOUL.md skill by name (planner/specialist/evaluator). article-write is a TOOL not a skill: call that tool with project=KEY.", {"name": "string", "skill": "string"}, (p) => {
   return sidecar_tool("skill-run", stringify(p));
 };

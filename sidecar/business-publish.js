@@ -9,6 +9,8 @@ const fs = require('fs')
 const path = require('path')
 const H = require('./business-helpers')
 const { summarizeQueueOutput, QUEUE_TASKS } = require('./queueOutput')
+const { runPublishPending } = require('./publishPending')
+const { resyncPendingList } = require('./pendingResync')
 
 const WP_TOOLS = process.env.WORDPRESS_TOOLS_DIR
 
@@ -96,7 +98,12 @@ async function runWpMakeTask(name, label, makeTarget, timeoutMs) {
     return `error: ${name} failed — ${H.truncateToTail(tail, 4000)}${hint}`
   }
   const combined = (res.stdout || '') + (res.stderr ? '\n--- stderr ---\n' + res.stderr : '')
-  if (QUEUE_TASKS.has(name)) return summarizeQueueOutput(label, combined)
+  if (QUEUE_TASKS.has(name)) {
+    // The make target wrote an id back into an article frontmatter. The product
+    // convention says the pending list then shortens automatically — that is
+    // NOT wordpress-tools' job, so close the loop here (best effort, one line).
+    return summarizeQueueOutput(label, combined) + (await resyncPendingList(label))
+  }
   return `> ${label} 完成 (make ${makeTarget})\n\n` + H.truncate(combined, 32 * 1024)
 }
 
@@ -379,4 +386,7 @@ module.exports = {
   'article-archive': async (args) =>
     runCrewaiPublishTask('article-archive', CREWAI_TASKS['article-archive'], args),
   'article-discover': async (args) => runArticleDiscover(args),
+  // Read-only: list what is still unpublished per platform. Never writes, so
+  // needsApproval is false and the model may call it freely to answer 清单 questions.
+  'publish-pending': async () => runPublishPending(),
 }
