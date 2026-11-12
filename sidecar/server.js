@@ -1192,6 +1192,19 @@ async function handle(req, res) {
       // of the payload; the full file path stays in it.
       const MAX_TOOL_RESULT_CHARS = 6000
       let outText = String(text)
+      // A make/shell runner that exits non-zero appends a literal "[exit code:
+      // N]" marker and RESOLVES (it only rejects when there is no output at
+      // all). Tools like publish-wechat.mjs then surface a real failure ("❌
+      // 建草稿失败 errcode=45003") with neither an `error:` prefix nor a thrown
+      // exception, so the model saw an ambiguous result and kept re-issuing the
+      // identical call. Demote such results to a clear failure: prefix with
+      // "tool error: " — the exact form normalizeToolError already uses so
+      // agent-httpd does NOT treat it as a 502 — so the model reads the real
+      // reason and toolGuard refuses the byte-identical retry.
+      if (/\[exit code:\s*(?!0\b)\d+\]/.test(text) &&
+          !/^\s*(tool error:|error:)/i.test(outText)) {
+        outText = 'tool error: ' + outText
+      }
       if (outText.length > MAX_TOOL_RESULT_CHARS) {
         outText =
           outText.slice(0, MAX_TOOL_RESULT_CHARS) +

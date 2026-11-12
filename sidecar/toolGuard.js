@@ -48,6 +48,13 @@ function terminalState(name, outcome) {
   // normalizeToolError() rewrites `error: ...` into `tool error: ...` so
   // agent-httpd does not treat it as a protocol-level 502.
   if (/^\s*(tool error:|error:)/i.test(s)) return { kind: 'failure', text: s }
+  // A make/shell runner that exits non-zero appends a literal "[exit code: N]"
+  // marker and RESOLVES (it only rejects when there is no output at all). Tools
+  // such as publish-wechat.mjs then surface a real failure ("❌ 建草稿失败
+  // errcode=45003") with neither an `error:` prefix nor a thrown exception, so
+  // this guard previously missed it and a model kept re-issuing the identical
+  // failing call. Any non-zero exit marker is therefore a terminal failure.
+  if (/\[exit code:\s*(?!0\b)\d+\]/.test(s)) return { kind: 'failure', text: s }
   if (QUEUE_TASKS.has(name) && s.includes(QUEUE_EMPTY_MARKER)) {
     return { kind: 'empty', text: s }
   }

@@ -41,6 +41,33 @@ test('normalizeToolError prefix counts as a failure', () => {
   assert.ok(G.check('article-write', args))
 })
 
+// 2026-11-12 (later): publish-wechat.mjs exits 1 on a WeChat API error
+// (errcode=45003, title too long) via console.error + process.exit, with no
+// `error:` prefix and without throwing. The make runner resolves and the result
+// only carries a literal "[exit code: 1]" marker, so the guard must detect that
+// and refuse the byte-identical retry — otherwise the model re-issues
+// wechat-draft({}) on the next round.
+test('a non-zero exit-code marker is a terminal failure without a tool error: prefix', () => {
+  G._reset()
+  const args = {}
+  const raw =
+    '$ make -C wordpress-tools wechat-draft\n' +
+    '❌ 建草稿失败 errcode=45003 errmsg=标题长度超出限制\n' +
+    '[exit code: 1]'
+  assert.equal(G.check('wechat-draft', args), null)
+  G.record('wechat-draft', args, { result: raw })
+  const refusal = G.check('wechat-draft', args)
+  assert.match(refusal, /拒绝重复执行/)
+  assert.match(refusal, /请勿用相同参数重试/)
+  assert.match(refusal, /45003/)
+})
+
+test('a zero exit code marker is NOT treated as a failure', () => {
+  G._reset()
+  G.record('shell', { command: 'true' }, { result: 'ok\n[exit code: 0]' })
+  assert.equal(G.check('shell', { command: 'true' }), null)
+})
+
 test('successful calls are never refused (explicit re-run stays possible)', () => {
   G._reset()
   const args = { add: false }
