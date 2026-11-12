@@ -201,23 +201,23 @@ tool "hot-news-publish", "[APPROVAL][EXTERNAL] Publish a hot-news draft. For gen
   return sidecar_tool("hot-news-publish", stringify(p));
 };
 
-tool "build-juejin", "[APPROVAL] Build a Juejin draft PAYLOAD locally (no upload). To actually save the draft use juejin-draft. Needs approval; report the artifact path.", {}, (p) => {
+tool "build-juejin", "[APPROVAL] ZERO-ARG queue tool: build Juejin draft PAYLOADS locally for every article still missing a juejin copy (no upload). Never pass a project, never list candidates, never search for the Makefile with read-file/shell. To actually save a draft call juejin-draft. Needs approval; report the artifact path.", {}, (p) => {
   return sidecar_tool("build-juejin", stringify(p));
 };
 
-tool "juejin-draft", "[APPROVAL][EXTERNAL] Save a DRAFT to Juejin. Does NOT publish: use juejin-publish only on an explicit publish request; build-juejin only builds the payload. Needs approval; never call twice.", {}, (p) => {
+tool "juejin-draft", "[APPROVAL][EXTERNAL] ZERO-ARG queue tool: save a DRAFT for the NEXT unpublished article. Draft counts as published (draft=published, same as WeChat MP): the pending queue marks it sent and shrinks. Do NOT follow with juejin-publish unless the user explicitly asks to go live. Never pass a project, never list candidates, never search for scripts. One call per request; repeat only when the user asks for several articles.", {}, (p) => {
   return sidecar_tool("juejin-draft", stringify(p));
 };
 
-tool "juejin-publish", "[APPROVAL][IRREVERSIBLE] PUBLISH to Juejin. For a draft use juejin-draft; for payload only use build-juejin. Needs approval; explicit user publish request only.", {}, (p) => {
+tool "juejin-publish", "[APPROVAL][IRREVERSIBLE] OPTIONAL: explicitly take an already-built draft live. ZERO-ARG queue tool, automatically picks the next draft. A draft already counts as published, so the pending queue does NOT depend on this step; call ONLY when the user explicitly asks to go live. For a draft use juejin-draft; for payload only use build-juejin. Needs approval.", {}, (p) => {
   return sidecar_tool("juejin-publish", stringify(p));
 };
 
-tool "wechat-draft", "Create a WeChat MP draft (external side effect). Human approval required; creates a draft only, does not push to followers.", {}, (p) => {
+tool "wechat-draft", "ZERO-ARG queue tool (external side effect): create the WeChat MP draft for the NEXT unpublished article. Draft counts as sent, same as Juejin: life-dash marks it sent and shortens the queue. Human approval required. Never pass a project, never list candidates.", {}, (p) => {
   return sidecar_tool("wechat-draft", stringify(p));
 };
 
-tool "sf-pw-publish", "Publish to SegmentFault via Playwright (external, irreversible). Human approval required; explicit user request only.", {}, (p) => {
+tool "sf-pw-publish", "ZERO-ARG queue tool (external, irreversible): publish to SegmentFault via Playwright, automatically picks the NEXT unpublished article. Human approval required; explicit user request only. Never pass a project; do not search for scripts.", {}, (p) => {
   return sidecar_tool("sf-pw-publish", stringify(p));
 };
 

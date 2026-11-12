@@ -18,6 +18,7 @@ const TOOL_DISCIPLINE = [
   '6. 工具成功时必须如实转达结论（项目名、产物路径、是否隔离/是否发布）；进度日志里的 DeprecationWarning、asyncio 提示等无害告警不是故障。严禁编造「出现了一个小问题」之类的安抚话术，严禁用「是否需要我…/请选择 1、2、3」代替结论。',
   '7. publish / 发布 / 上线这类有外部副作用的动作，只有用户在当前消息里明确写出「发布」「上线」「publish」时才允许置 true。用户只回复编号或项目名时一律省略该参数，不得自行决定发布。',
   '8. 转述工具结果时，文件名、目录、提交哈希、计数、金额必须逐字复制工具输出：不得改写、合并、张冠李戴，也不得补出输出里没有的条目。工具输出只给了一行摘要时，只转述这一行，不要自行扩写成「完整清单」。',
+  '9. 队列驱动的发布工具（build-juejin / juejin-draft / juejin-publish / wechat-draft / sf-pw-publish）全部零参数、每次自动取未发清单里的下一篇：用户说「建下一篇草稿」时直接调用一次对应工具即可，严禁要求用户选项目或选文章、严禁传 project、严禁改用 article-write，也严禁用 read-file / shell / make 去找 Makefile 或脚本路径。当前口径「草稿=已发」（同公众号），建完草稿即视为已发，不要自动追加 juejin-publish；只有用户明确要求显式上线时才调用它。工具需人工审批时等待结果，不要重试或换工具。',
 ].join('\n')
 
 // Explicit user consent for a side-effecting publish. Negations ("不要发布",

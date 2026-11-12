@@ -272,9 +272,13 @@ test-gateway:
 	@node sidecar/toolContract.test.js
 	@node sidecar/security.test.js
 	@node sidecar/consistency.test.js
+	@node sidecar/queueOutput.test.js
 	@node sidecar/progress.test.js
 	@node sidecar/toolGuard.test.js
 	@node sidecar/chatBody.test.js
+	@node sidecar/toolCatalog.test.js
+	@node sidecar/taskMatch.test.js
+	@node sidecar/souls.test.js
 	@node sidecar/sessionTitle.test.js
 	@node sidecar/articleArchiveNumbering.test.js
 	@node sidecar/approval.test.js

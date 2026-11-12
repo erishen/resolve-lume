@@ -142,16 +142,21 @@ const DESC_OVERRIDE = {
     'Screenshot the current shared browser page. Human approval required; never guess page content from the URL alone.',
   'article-archive':
     'Archive/reorganise finished article projects (local file moves). Human approval required; report exactly what moved.',
+  // 2026-11-12：旧文案把「草稿=已发」口径写反了（juejin-draft 说 "Does NOT
+  // publish: use juejin-publish..."，wechat-draft 说 "does not push to
+  // followers"），模型因此把已建草稿说成「还没发」并追加不必要的上线步骤。
+  // 这一族工具全是零参数队列工具，不接 project、不让用户选文章，也不许去
+  // read-file/shell 找 Makefile（那是 juejin-publish 卡片跑偏时的实际行为）。
   'build-juejin':
-    '[APPROVAL] Build a Juejin draft PAYLOAD locally (no upload). To actually save the draft use juejin-draft. Needs approval; report the artifact path.',
+    '[APPROVAL] ZERO-ARG queue tool: build Juejin draft PAYLOADS locally for every article still missing a juejin copy (no upload). Never pass a project, never list candidates, never search for the Makefile with read-file/shell. To actually save a draft call juejin-draft. Needs approval; report the artifact path.',
   'juejin-draft':
-    '[APPROVAL][EXTERNAL] Save a DRAFT to Juejin. Does NOT publish: use juejin-publish only on an explicit publish request; build-juejin only builds the payload. Needs approval; never call twice.',
+    '[APPROVAL][EXTERNAL] ZERO-ARG queue tool: save a DRAFT for the NEXT unpublished article. Draft counts as published (draft=published, same as WeChat MP): the pending queue marks it sent and shrinks. Do NOT follow with juejin-publish unless the user explicitly asks to go live. Never pass a project, never list candidates, never search for scripts. One call per request; repeat only when the user asks for several articles.',
   'juejin-publish':
-    '[APPROVAL][IRREVERSIBLE] PUBLISH to Juejin. For a draft use juejin-draft; for payload only use build-juejin. Needs approval; explicit user publish request only.',
+    '[APPROVAL][IRREVERSIBLE] OPTIONAL: explicitly take an already-built draft live. ZERO-ARG queue tool, automatically picks the next draft. A draft already counts as published, so the pending queue does NOT depend on this step; call ONLY when the user explicitly asks to go live. For a draft use juejin-draft; for payload only use build-juejin. Needs approval.',
   'wechat-draft':
-    'Create a WeChat MP draft (external side effect). Human approval required; creates a draft only, does not push to followers.',
+    'ZERO-ARG queue tool (external side effect): create the WeChat MP draft for the NEXT unpublished article. Draft counts as sent, same as Juejin: life-dash marks it sent and shortens the queue. Human approval required. Never pass a project, never list candidates.',
   'sf-pw-publish':
-    'Publish to SegmentFault via Playwright (external, irreversible). Human approval required; explicit user request only.',
+    'ZERO-ARG queue tool (external, irreversible): publish to SegmentFault via Playwright, automatically picks the NEXT unpublished article. Human approval required; explicit user request only. Never pass a project; do not search for scripts.',
   'hot-news-publish':
     '[APPROVAL][EXTERNAL] Publish a hot-news draft. For generating copy use hot-news; for a pre-flight check use hot-news-check. Needs approval; explicit publish request only.',
   'capabilities':

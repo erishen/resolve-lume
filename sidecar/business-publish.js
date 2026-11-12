@@ -8,12 +8,17 @@
 const fs = require('fs')
 const path = require('path')
 const H = require('./business-helpers')
+const { summarizeQueueOutput, QUEUE_TASKS } = require('./queueOutput')
 
 const WP_TOOLS = process.env.WORDPRESS_TOOLS_DIR
 
 const TASK_TIMEOUT_MS = 300_000
 const BROWSER_TASK_TIMEOUT_MS = 600_000 // sf-pw-publish: Chrome boot + login probe + publish
 const BROWSER_TASKS = new Set(['sf-pw-publish'])
+
+// Queue-driven make targets print one skip block per article before acting on
+// one; queueOutput.js trims that trace down to the real conclusion so the model
+// cannot mistake "skipped" for "nothing to do".
 
 // Probe whether the storageState in .sf-state.json is still accepted by the
 // server: a 3xx redirect to /user/login means the session truly expired; a 200
@@ -91,6 +96,7 @@ async function runWpMakeTask(name, label, makeTarget, timeoutMs) {
     return `error: ${name} failed — ${H.truncateToTail(tail, 4000)}${hint}`
   }
   const combined = (res.stdout || '') + (res.stderr ? '\n--- stderr ---\n' + res.stderr : '')
+  if (QUEUE_TASKS.has(name)) return summarizeQueueOutput(label, combined)
   return `> ${label} 完成 (make ${makeTarget})\n\n` + H.truncate(combined, 32 * 1024)
 }
 

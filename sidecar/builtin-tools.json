@@ -598,7 +598,7 @@
     },
     {
       "name": "build-juejin",
-      "description": "构建掘金副本：调用 wordpress-tools 的 `make build-juejin`，遍历 articles/zh 为「还没有 articles/juejin 副本」的文章生成掘金版 md（正文取自 zh 干净源，保留 juejin frontmatter/footer/FAQ），不调掘金接口、不需要 cookie。建完再调用 juejin-draft 建草稿。⚠️ 只对 articles/zh 里的文章有效；仍留在 pse/zh 的稿需先发布+归档（make archive）才会被覆盖。",
+      "description": "零参数·自动扫全队列：构建掘金副本。调用 wordpress-tools 的 `make build-juejin`，遍历 articles/zh 为「还没有 articles/juejin 副本」的文章生成掘金版 md（正文取自 zh 干净源，保留 juejin frontmatter/footer/FAQ），不调掘金接口、不需要 cookie。建完再调用 juejin-draft 建草稿。⚠️ 不要传 project、不要问用户选哪篇；每次调用处理队列中所有缺副本的文章。只对 articles/zh 里的文章有效；仍留在 pse/zh 的稿需先发布+归档（make archive）才会被覆盖。",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -609,7 +609,7 @@
     },
     {
       "name": "juejin-draft",
-      "description": "建掘金草稿：调用 wordpress-tools 的 `make juejin-draft`，为下一篇未发布文章创建掘金草稿并写回 juejin_draft_id。每次只处理一篇。需要 wordpress-tools/.env 中的掘金 cookie。⚠️ 每次调用本工具自动建队列中的下一篇；要连续建多篇就重复调用本工具，不要自己用 shell 跑 node 命令。",
+      "description": "零参数·自动取队列下一篇：建掘金草稿。当前口径「草稿=已发」（同公众号）——建完未发清单会自动把它标为已发并缩短队列，不需要再调 juejin-publish。调用 wordpress-tools 的 `make juejin-draft`，为下一篇未建草稿的文章创建掘金草稿并写回 juejin_draft_id，每次只处理一篇。⚠️ 严禁传 project、严禁问用户选文章、严禁用 shell/read-file 找脚本；要连续建多篇就重复调用本工具。需要 wordpress-tools/.env 中的掘金 cookie。",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -620,7 +620,7 @@
     },
     {
       "name": "juejin-publish",
-      "description": "掘金草稿上线（可选步骤）：调用 wordpress-tools 的 `make juejin-publish`，把已建草稿（juejin_draft_id）的下一篇点发布并写回 juejin_id。⚠️ 当前口径「草稿=已发」（同公众号）：make juejin-draft 建完草稿即视为已发，本步骤仅在你希望显式点上线时才需要；未发清单不依赖它。需要掘金 cookie。⚠️ 每次调用自动发队列中下一篇；连续发多篇就重复调用。",
+      "description": "零参数·自动取队列下一篇（可选步骤）：把已建草稿显式点上线。⚠️ 当前口径「草稿=已发」（同公众号）：make juejin-draft 建完草稿即视为已发，未发清单不依赖本步骤，一般不必做；只有用户明确要求「把已建草稿点上线」时才调用。调用 wordpress-tools 的 `make juejin-publish`，把已建草稿（juejin_draft_id）的下一篇点发布并写回 juejin_id。需要掘金 cookie。⚠️ 严禁传 project、严禁问用户选文章；连续发多篇就重复调用。",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -631,7 +631,7 @@
     },
     {
       "name": "wechat-draft",
-      "description": "建微信公众号草稿：调用 wordpress-tools 的 `make wechat-draft`，为下一篇未建草稿的文章创建公众号草稿箱草稿并写回 wechat_draft_id。每次只处理一篇。必须在本机 Mac 运行（微信校验 IP），需要 .env 中的 appid/appsecret。工作流语义：建进草稿箱即视为已群发，建完 life-dash 未发清单会自动把它标为「已群发 ✓」、队列缩短（自动同步）；若某篇没建草稿但确认已群发，把 base 加进 wechat-sent.json 白名单再 make rescan。若提示「没有待发布（全部已有 wechat_draft_id）」，说明主清单里所有需要建草稿的文章都已建好，无需重复调用。",
+      "description": "零参数·自动取队列下一篇：建微信公众号草稿（草稿=已发，同公众号口径）。调用 wordpress-tools 的 `make wechat-draft`，为下一篇未建草稿的文章创建公众号草稿箱草稿并写回 wechat_draft_id，每次只处理一篇。⚠️ 严禁传 project、严禁问用户选文章。必须在本机 Mac 运行（微信校验 IP），需要 .env 中的 appid/appsecret。工作流语义：建进草稿箱即视为已群发，建完 life-dash 未发清单会自动把它标为「已群发 ✓」、队列缩短（自动同步）；若某篇没建草稿但确认已群发，把 base 加进 wechat-sent.json 白名单再 make rescan。若提示「没有待发布（全部已有 wechat_draft_id）」，说明主清单里所有需要建草稿的文章都已建好，无需重复调用。",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -642,7 +642,7 @@
     },
     {
       "name": "sf-pw-publish",
-      "description": "思否发布（Playwright 真浏览器版）：调用 wordpress-tools 的 `make sf-pw-publish`，启动浏览器登录思否并发布下一篇未发布文章，写回 sf_id。每次只发一篇。需要 Chrome 已登录思否（或设置 SF_USER_DATA_DIR）。⚠️ 每次调用本工具自动发队列中的下一篇；要连续发多篇就重复调用本工具，不要自己用 shell 跑 node 命令（cwd 不对会找不到模块）。",
+      "description": "零参数·自动取队列下一篇：思否发布（Playwright 真浏览器版）。调用 wordpress-tools 的 `make sf-pw-publish`，启动浏览器登录思否并发布下一篇未发布文章，写回 sf_id。每次只发一篇。⚠️ 严禁传 project、严禁问用户选文章、严禁用 shell/read-file 找脚本；要连续发多篇就重复调用本工具。需要 Chrome 已登录思否（或设置 SF_USER_DATA_DIR）。",
       "parameters": {
         "type": "object",
         "properties": {},

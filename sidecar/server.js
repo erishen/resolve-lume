@@ -33,7 +33,7 @@ const progress = require('./progress')
 const approval = require('./approval')
 const toolGuard = require('./toolGuard')
 const { buildAgentChatBody, hasExplicitPublishIntent, hasExplicitPaidIntent } = require('./chatBody')
-const { renderToolCatalog } = require('./toolCatalog')
+const { renderToolCatalog, enrichToolDescriptions } = require('./toolCatalog')
 const { matchTaskByMessage } = require('./taskMatch')
 const { taskCopy, SCOPES, renderSoulPrompt } = require('./taskCopy')
 const { sessionTitle } = require('./sessionTitle')
@@ -693,6 +693,14 @@ const CATALOG_TTL_MS = 60 * 1000
 // test seam: tests can set this to a fixed array and skip the HTTP fetch
 const catalogState = { at: 0, text: '', tools: null }
 
+// /react/api/tools reports sidecar__* with an empty `desc`; the authoritative
+// text lives in builtin-tools.json. Without this map the injected catalog is a
+// list of naked names and a small model cannot tell `juejin-draft` (queue tool)
+// from `article-write` (project-picking tool) — 2026-11-12 incident.
+const BUILTIN_DESC = Object.fromEntries(
+  builtin.BUILTIN_TOOLS.map((t) => [t.name, t.description || '']),
+)
+
 function backendTools() {
   const u = new URL(AGENT_URL)
   return new Promise((resolve) => {
@@ -704,7 +712,12 @@ function backendTools() {
         resp.on('end', () => {
           try {
             const data = JSON.parse(body)
-            resolve(Array.isArray(data.tools) ? data.tools : [])
+            resolve(
+              enrichToolDescriptions(
+                Array.isArray(data.tools) ? data.tools : [],
+                BUILTIN_DESC,
+              ),
+            )
           } catch {
             resolve([])
           }

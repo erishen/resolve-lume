@@ -72,6 +72,18 @@ test('discipline forbids fake "small problem" scripts and unprompted publish', (
   assert.match(TOOL_DISCIPLINE, /不得自行决定发布/)
 })
 
+test('discipline states the zero-arg queue-tool contract', () => {
+  // 2026-11-12: "建下一篇掘金草稿" was answered with "请选一个项目" and the
+  // sibling juejin-publish card spent 6 rounds reading files hunting for a
+  // Makefile. This rule is injected into EVERY chat, even with no task soul.
+  assert.match(TOOL_DISCIPLINE, /队列驱动的发布工具/)
+  assert.match(TOOL_DISCIPLINE, /严禁要求用户选项目或选文章/)
+  assert.match(TOOL_DISCIPLINE, /严禁改用 article-write/)
+  assert.match(TOOL_DISCIPLINE, /严禁用 read-file \/ shell \/ make 去找 Makefile/)
+  assert.match(TOOL_DISCIPLINE, /草稿=已发/)
+  assert.match(TOOL_DISCIPLINE, /不要自动追加 juejin-publish/)
+})
+
 test('publish intent needs explicit, non-negated user wording', () => {
   assert.equal(hasExplicitPublishIntent('7'), false)
   assert.equal(hasExplicitPublishIntent('写 resolve-lume 的文章'), false)

@@ -15,8 +15,35 @@
 // The catalog never *narrows* the surface: every tool stays callable, it only
 // makes the choice legible. Pure function so it is unit-testable.
 
-const DEFAULT_DESC = 56
+// /react/api/tools reports `sidecar__*` with an EMPTY `desc` (agent-httpd only
+// carries the name there), while the authoritative Chinese descriptions live in
+// builtin-tools.json. 56 chars was also too short to survive the "⚠️ 每次调用…
+// 自动建队列中的下一篇" clause, which is the ONLY thing that tells a small model
+// it must not ask the user to pick a project. Both were live failure modes on
+// 2026-11-12 ("建掘金草稿" -> article-write candidate list).
+const DEFAULT_DESC = 96
 const DEFAULT_MAX = 140
+
+// Reconcile the two description sources. /react/api/tools carries a terse
+// ENGLISH `desc` from the generated lume-tools bridge (DESC_OVERRIDE, written
+// for the C-side size budget), while builtin-tools.json holds the authoritative
+// Chinese contract wording that the UI also shows. The bridge text used to say
+// "Does NOT publish: use juejin-publish" — the exact opposite of the product's
+// "draft=published" convention — so for sidecar__* the authoritative text MUST
+// win, not merely fill an empty slot. Pure so it is testable without HTTP.
+function enrichToolDescriptions(tools, byName) {
+  const lookup = byName instanceof Map ? byName : new Map(Object.entries(byName || {}))
+  return (Array.isArray(tools) ? tools : []).map((t) => {
+    if (!t || typeof t.name !== 'string') return t
+    const bare = t.name.replace(/^sidecar__/, '')
+    const authoritative = String(lookup.get(bare) || lookup.get(t.name) || '')
+    if (/^sidecar__/.test(t.name) && authoritative) {
+      return { ...t, description: authoritative, desc: authoritative }
+    }
+    const existing = String(t.description || t.desc || '').trim()
+    return existing ? { ...t, description: existing } : t
+  })
+}
 
 function cleanDesc(s, maxLen) {
   const one = String(s == null ? '' : s)
@@ -65,7 +92,7 @@ function renderToolCatalog(tools, opts) {
   for (const [g, items] of groups) {
     lines.push('', `## ${g}`)
     for (const t of items) {
-      const desc = cleanDesc(t.description, descMax)
+      const desc = cleanDesc(t.description || t.desc, descMax)
       lines.push(desc ? `- ${t.name} — ${desc}` : `- ${t.name}`)
     }
   }
@@ -75,4 +102,4 @@ function renderToolCatalog(tools, opts) {
   return lines.join('\n')
 }
 
-module.exports = { renderToolCatalog, groupOf, cleanDesc }
+module.exports = { renderToolCatalog, groupOf, cleanDesc, enrichToolDescriptions, DEFAULT_DESC }
