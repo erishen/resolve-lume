@@ -836,6 +836,13 @@ body {
  * 内容矮于视口时两端均分剩余空间 → 垂直居中；内容高于视口时 spacer 收缩为 0
  * → 顶对齐且整块可滚动到最开头（不会出现 flex `margin:auto` 居中时顶部被裁、
  * 刷新停在示例区中间的毛病）。不依赖 `safe` 关键字，全浏览器安全。 */
+.message-list.empty {
+  /* 恢复示例区水平居中：原 margin:auto 在 flex 子项上同时管了水平+垂直居中，
+   * 改版后垂直由 ::before/::after spacer 负责，这里单独把水平居中补回来，
+   * 否则 max-width:600px 的示例块会在更宽容器里左对齐（看起来「不居中」）。
+   * 仅作用于空状态变体，非空聊天的消息气泡仍按默认 stretch 撑满，不受影响。 */
+  align-items: center;
+}
 .message-list.empty::before,
 .message-list.empty::after {
   content: '';
