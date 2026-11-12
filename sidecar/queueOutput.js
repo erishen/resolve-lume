@@ -32,9 +32,17 @@ const QUEUE_TASKS = new Set([
 // it). Keep it ASCII and unique — it is NOT a user-facing command.
 const QUEUE_EMPTY_MARKER = '[QUEUE_EMPTY]'
 
-// Verdicts the host make targets actually print. `剩余未建草稿 0 篇` is NOT one
-// of them: the same line is printed after a SUCCESSFUL one-article run.
-const EMPTY_VERDICT = /全部已发布，无需操作|没有待发布（全部已有|没有待发布\(all|nothing (?:left|to publish)|no unpublished/i
+// Verdicts the host make targets actually print when nothing dispatchable is
+// left. `剩余未建草稿 0 篇` is NOT among them: the same line is printed after a
+// SUCCESSFUL one-article run, so it must never flip a real draft into "empty".
+// The patterns below mirror each script's literal no-work conclusion:
+//   - publish-juejin.mjs (draft & --publish): `✅ 全部已发布，无需操作。`
+//   - build-juejin-from-zh.mjs:              `✅ juejin 处理完成：重建 0 篇，新建(seed) 0 篇`
+//   - publish-wechat.mjs:                    `✅ 没有待发布的草稿（全部已有 wechat_draft_id）...`
+//   - publish-segmentfault-playwright.mjs:    `✅ 全部已发布，无需操作。`
+// build-juejin / wechat require BOTH counters to be 0, so a pure-seed or a real
+// rebuild is never misread as empty.
+const EMPTY_VERDICT = /全部已发布，无需操作|没有待发布（全部已有|没有待发布的草稿（全部已有|重建\s*0\s*篇，新建\(seed\)\s*0\s*篇|nothing (?:left|to publish)|no unpublished/i
 // Positive proof that real work happened. Skip blocks mention juejin_draft_id
 // too, so only the ✅/📝 result lines count.
 const DID_WORK = /✅\s*本次处理\s*[1-9]|📝\s*已记录|✅\s*草稿 draft_id\s*=/

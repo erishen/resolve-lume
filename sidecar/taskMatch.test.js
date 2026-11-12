@@ -72,14 +72,18 @@ test('writing / commenting / WordPress publishing keep their own souls', () => {
   )
 })
 
-test('publish-dispatch pins the queue tools and nothing that invites wandering', () => {
+test('publish-dispatch pins only the five queue tools and no wandering inviter', () => {
   const fm = frontmatter(path.join(SOULS_DIR, 'publish-dispatch', 'SOUL.md'))
   assert.ok(fm, 'souls/publish-dispatch/SOUL.md is missing')
   const tools = (fm.tools || '').split(',').map((s) => s.trim()).filter(Boolean)
+  // The five zero-arg queue tools only.
   for (const n of [
     'sidecar__build-juejin', 'sidecar__juejin-draft', 'sidecar__juejin-publish',
-    'sidecar__wechat-draft', 'sidecar__sf-pw-publish', 'sidecar__capabilities',
+    'sidecar__wechat-draft', 'sidecar__sf-pw-publish',
   ]) assert.ok(tools.includes(n), `publish-dispatch must pin ${n}`)
+  // `capabilities` used to be pinned and the model then probed it on every
+  // round, spawning extra ReAct loops. It must stay out of the whitelist.
+  assert.ok(!tools.includes('sidecar__capabilities'), 'publish-dispatch must NOT pin sidecar__capabilities')
   // These are what let the old failures happen: picking a project, or hunting
   // for a Makefile with the file/shell tools.
   for (const n of [

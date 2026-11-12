@@ -92,8 +92,43 @@ test('the live pending snapshot is attached to an empty queue answer', () => {
   assert.doesNotMatch(out, /原始输出尾部/)
 })
 
-test('an empty queue never re-runs the life-dash generator', () => {
-  // No id was written back, so resyncPendingList would only rewrite the user's
+test('build-juejin empty verdict is promoted (重建 0 篇，新建(seed) 0 篇)', () => {
+  // build-juejin-from-zh.mjs prints this when every zh article already has a
+  // juejin copy. It must NOT be mistaken for "did work" or handed raw lines.
+  const raw = '✅ juejin 处理完成：重建 0 篇，新建(seed) 0 篇'
+  const out = summarizeQueueOutput('掘金建稿', raw)
+  assert.match(out, new RegExp(QUEUE_EMPTY_MARKER.replace(/[[\]]/g, '\\$&')))
+  assert.match(out, /队列为空/)
+  assert.match(out, /不等于「N 篇待建草稿」/)
+  assert.doesNotMatch(out, /原始输出尾部/)
+})
+
+test('wechat-draft empty verdict is promoted (没有待发布的草稿)', () => {
+  // publish-wechat.mjs prints this when every wechat article already has a draft.
+  const raw = '✅ 没有待发布的草稿（全部已有 wechat_draft_id）。用 --force 可重建设。'
+  const out = summarizeQueueOutput('微信草稿', raw)
+  assert.match(out, new RegExp(QUEUE_EMPTY_MARKER.replace(/[[\]]/g, '\\$&')))
+  assert.match(out, /队列为空/)
+  assert.doesNotMatch(out, /原始输出尾部/)
+})
+
+test('build-juejin with real work is NOT an empty queue', () => {
+  // rebuilt=3 must bypass EMPTY_VERDICT even though seeded=0.
+  const raw = '[build] x.md: ...\n✅ juejin 处理完成：重建 3 篇，新建(seed) 0 篇'
+  const out = summarizeQueueOutput('掘金建稿', raw)
+  assert.doesNotMatch(out, /\[QUEUE_EMPTY\]/)
+  assert.match(out, /重建 3 篇/)
+})
+
+test('build-juejin with pure seeding is NOT an empty queue', () => {
+  // seeded=2 is real work; only BOTH counters being 0 means empty.
+  const raw = '[seed] y.md: 新建 juejin 版\n✅ juejin 处理完成：重建 0 篇，新建(seed) 2 篇'
+  const out = summarizeQueueOutput('掘金建稿', raw)
+  assert.doesNotMatch(out, /\[QUEUE_EMPTY\]/)
+  assert.match(out, /新建\(seed\) 2 篇/)
+})
+
+test('an empty queue never re-runs the life-dash generator', () => {  // No id was written back, so resyncPendingList would only rewrite the user's
   // articlePublish.{json,ts} for no reason. Pin the early return.
   const src = fs.readFileSync(path.join(__dirname, 'business-publish.js'), 'utf8')
   assert.match(src, /if \(summary\.includes\(QUEUE_EMPTY_MARKER\)\) return summary/)

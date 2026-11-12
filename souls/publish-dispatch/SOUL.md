@@ -2,7 +2,7 @@
 name: 平台草稿与发布队列
 description: 执行建掘金草稿、建公众号草稿、发布到思否、掘金草稿上线等由未发清单队列驱动的动作。相关工具全部零参数，每次自动取队列中的下一篇，不需要用户选项目或选文章；只查清单请用「各平台未发清单」任务。
 triggers: 建掘金草稿, 掘金草稿, 未建草稿, 草稿=已发, 下一篇, 掘金建稿, 掘金草稿上线, 草稿上线, 建公众号草稿, 公众号草稿, 微信草稿, 发布到思否, 思否发布, juejin-draft, juejin-publish, wechat-draft, sf-pw-publish, build-juejin, 生成本地副本, 缺副本, 掘金版 md
-tools: sidecar__build-juejin, sidecar__juejin-draft, sidecar__juejin-publish, sidecar__wechat-draft, sidecar__sf-pw-publish, sidecar__capabilities
+tools: sidecar__build-juejin, sidecar__juejin-draft, sidecar__juejin-publish, sidecar__wechat-draft, sidecar__sf-pw-publish
 ---
 
 # 平台草稿与发布队列（publish-dispatch）
@@ -17,7 +17,7 @@ tools: sidecar__build-juejin, sidecar__juejin-draft, sidecar__juejin-publish, si
 - **不要问用户选哪篇文章、不要列候选项目清单、不要把「下一篇」翻译成项目名。** 用户说「建下一篇草稿」时，直接调用一次对应工具就是完整答案。
 - 一次调用只处理一篇。只有用户明确要求「连续建多篇」时才重复调用同一个工具；不要一次并发多篇。
 - 这些脚本位于宿主机的 wordpress-tools 仓库，由工具内部调用 `make` 执行。**严禁用 `read-file` / `shell` / `make` 去找 Makefile、脚本路径或项目目录**，也严禁改用 `article-write`（那是「写一篇新文章」的流水线，不是建草稿）。
-- 找不到需要的工具时，调用 `capabilities` 查询，并如实告知用户；不要凭印象拼造工具名。
+- 本任务要用哪个工具已由上方清单列全，**不要调用 `capabilities` 去枚举工具**，也不要改用 `article-write`；空队列结论已自带「不要再试」的停止说明，照着转达即可。
 
 ## 「草稿=已发」口径
 
