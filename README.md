@@ -287,3 +287,6 @@ Use `make sidecar-autostart-restart` after editing `sidecar/`, and
 - `/api/approval` currently has no gated tool to unlock: the endpoint validates `decision` / `callId`, logs an audit entry, and explicitly returns `applied:false`, no longer pretending that the user clicking "approve" actually changed execution.
 - **Export sanitization**: session Markdown / single-copy / JSON / job diagnostic logs all go through `exportText()` in `export.ts`—absolute paths strip the system prefix and account name leaving only the last 3 segments (short paths also drop the username), credential shapes like `sk-` / `ghp_` / `Bearer` are masked, and a single text segment is truncated to 3000 chars. Previously only `jobToLog` had local truncation, and JSON export was a bare `JSON.stringify(chat.messages)` that would leak complete tool results and host paths. Validation: `frontend/src/export.test.mjs` in `make check` (11 cases).
 - Compared with the old design (`legacy/host-sidecar/`): fixed the two known defects of "wholesale env passthrough" and "detached child process with no supervision, crashing silently".
+
+## Related Articles
+- [Resolve-Lume: Least-Privilege Agent Runtime](https://erishen.cn/resolve_lume-en/)

@@ -450,3 +450,6 @@ make sidecar-autostart-restart              # launchd 模式
   带出去。校验：`make check` 里的 `frontend/src/export.test.mjs`（11 个用例）。
 - 与旧设计（`legacy/host-sidecar/`）相比：修复了「全量 env 透传」与
   「detached 子进程无人看管、崩了无声死掉」两个已知缺陷。
+
+## 相关文章
+- [Resolve-Lume：基于最小权限原则的 Agent Runtime 分层架构](https://erishen.cn/resolve_lume/)
