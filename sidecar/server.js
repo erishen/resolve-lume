@@ -34,8 +34,8 @@ const approval = require('./approval')
 const toolGuard = require('./toolGuard')
 const { buildAgentChatBody, hasExplicitPublishIntent, hasExplicitPaidIntent } = require('./chatBody')
 const { renderToolCatalog, enrichToolDescriptions } = require('./toolCatalog')
-const { matchTaskByMessage } = require('./taskMatch')
-const { taskCopy, SCOPES, renderSoulPrompt } = require('./taskCopy')
+const { matchTaskByMessage, resolveChatTask } = require('./taskMatch')
+const { taskCopy, SCOPES, renderSoulPrompt, taskGuardrail } = require('./taskCopy')
 const { sessionTitle } = require('./sessionTitle')
 const { scanSkills: scanSkillsDir } = require('./skills')
 const desk = require('./desktop-desk')
@@ -601,14 +601,22 @@ function buildTasks() {
         .filter(Boolean)
       // Card text comes from taskCopy.js (studio-aligned Chinese names); the
       // soul frontmatter is the fallback and still owns the system prompt.
+      // The prompt is wrapped in studio's task guardrail (name + description +
+      // "only this task's tools"), so a matched task reads as a binding scope
+      // rather than advice a small model may ignore.
       const copy = taskCopy(name)
+      const displayName = (copy && copy.name) || fm.data.name || name
+      const displayDesc = (copy && copy.description) || fm.data.description || ''
       tasks.push({
         id: name,
-        name: (copy && copy.name) || fm.data.name || name,
-        description: (copy && copy.description) || fm.data.description || '',
+        name: displayName,
+        description: displayDesc,
         triggers: fm.data.triggers || '',
         includeTools: tools,
-        systemPrompt: renderSoulPrompt(fm.body.trim(), SOULS_DIR, name),
+        systemPrompt: taskGuardrail(
+          { name: displayName, description: displayDesc },
+          renderSoulPrompt(fm.body.trim(), SOULS_DIR, name),
+        ),
       })
     }
   } catch {
@@ -629,11 +637,44 @@ function buildTasks() {
 // Session -> task id, recorded when a chat starts. The task id is part of the
 // incoming /api/chat body but is dropped when chatBody.js builds the agent
 // payload, so a tool call later cannot recover it from the stream meta alone.
+// Persisted under the `sessionTasks` collection: a bare "6" sent after a
+// sidecar restart must still resolve to the task the session was running.
+const SESSION_TASK_DOC = 'sessionTasks'
 const sessionTasks = new Map()
+// No persisted record (sidecar restarted before this feature existed, or a fresh
+// checkout): derive it from the stored transcript — the newest user message that
+// still carries a task trigger is the task this session was working on.
+function deriveTaskFromSession(sid) {
+  const session = store.read('sessions', {})[sid]
+  if (!session || !Array.isArray(session.messages)) return ''
+  const tasks = buildTasks()
+  for (const m of [...session.messages].reverse()) {
+    if (!m || m.role !== 'user' || typeof m.content !== 'string') continue
+    const t = matchTaskByMessage(m.content, tasks)
+    if (t) return t.id
+  }
+  return ''
+}
+function lastTaskForSession(sessionId) {
+  if (!sessionId) return ''
+  const sid = String(sessionId)
+  const cached = sessionTasks.get(sid)
+  if (cached) return cached
+  const persisted = store.read(SESSION_TASK_DOC, {})[sid]
+  const resolved = persisted ? String(persisted) : deriveTaskFromSession(sid)
+  if (resolved) sessionTasks.set(sid, resolved)
+  return resolved
+}
 function noteSessionTask(sessionId, taskId) {
   if (!sessionId || !taskId) return
-  sessionTasks.set(String(sessionId), String(taskId))
+  const sid = String(sessionId)
+  const tid = String(taskId)
+  if (sessionTasks.get(sid) === tid) return
+  sessionTasks.set(sid, tid)
   if (sessionTasks.size > 500) sessionTasks.delete(sessionTasks.keys().next().value)
+  const all = store.read(SESSION_TASK_DOC, {})
+  all[sid] = tid
+  store.write(SESSION_TASK_DOC, all)
 }
 
 // Expensive pipeline calls (PSE / hot-news / article) cost minutes and money.
@@ -674,14 +715,22 @@ function getTask(id) {
 }
 
 // Explicit taskId wins (manual control, exactly like studio); otherwise auto-match.
+// A bare ordinal reply ("6" / "第 6 个" / "就它") has no trigger keyword at all;
+// when the session already ran a task, keep that task so the soul + tool
+// allow-list survive the pick-a-candidate turn (2026-11-15 incident: the model
+// re-ran article-discover instead of writing the picked project).
 function taskForChat(body) {
-  const explicit = getTask(body && body.taskId)
-  if (explicit) return explicit
   const messages = Array.isArray(body && body.messages) ? body.messages : []
-  const lastUser = [...messages].reverse().find((m) => m && m.role === 'user')
-  const auto = matchTaskByMessage(lastUser && lastUser.content, buildTasks())
-  if (auto) console.log(`[sidecar] task auto-match -> ${auto.id}`)
-  return auto
+  const sid = String((body && body.sessionId) || '')
+  const { task, source } = resolveChatTask({
+    taskId: body && body.taskId,
+    messages,
+    tasks: buildTasks(),
+    lastTaskId: lastTaskForSession(sid),
+  })
+  if (task && source === 'auto') console.log(`[sidecar] task auto-match -> ${task.id}`)
+  if (task && source === 'continuation') console.log(`[sidecar] task continuation -> ${task.id}`)
+  return task
 }
 
 // ---------- tool catalog (system-prompt decoration) ----------

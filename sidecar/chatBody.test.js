@@ -140,6 +140,30 @@ cases.push(['tool catalog sits above the discipline block', () => {
   assert.ok(!plain.system.includes('可用工具目录'))
 }])
 
+// 2026-11-15 incident: with the article-write soul attached, "6" must be read as
+// a pick from the previous numbered list — not as a reason to re-run
+// article-discover. The hint is deterministic, so a weak free model cannot
+// silently drop it the way it dropped the tool output instruction.
+cases.push(['a bare ordinal turn states what it selects, above the discipline', () => {
+  const task = { systemPrompt: 'SOUL BODY', includeTools: ['article-write'] }
+  const r = buildAgentChatBody({ messages: [{ role: 'user', content: '6' }] }, task)
+  assert.equal(r.message, '6')
+  assert.match(r.system, /本轮是清单选择/)
+  assert.match(r.system, /第 6 项/)
+  assert.match(r.system, /不要重新调用生成清单的工具/)
+  const iHint = r.system.indexOf('本轮是清单选择')
+  const iDisc = r.system.indexOf('# 工具调用纪律')
+  assert.ok(iHint > r.system.indexOf('SOUL BODY') && iHint < iDisc, 'hint sits between soul and discipline')
+
+  const plain = buildAgentChatBody(
+    { messages: [{ role: 'user', content: '帮我写一篇技术文章' }] },
+    task,
+  )
+  assert.ok(!plain.system.includes('本轮是清单选择'), 'normal prose gets no pick hint')
+  const noTask = buildAgentChatBody({ messages: [{ role: 'user', content: '6' }] }, undefined)
+  assert.ok(!noTask.system.includes('本轮是清单选择'), 'no task, no pick hint')
+}])
+
 let failed = 0
 for (const [name, fn] of cases) {
   try {

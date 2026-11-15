@@ -16,7 +16,7 @@ const path = require('path')
 const ROOT = path.resolve(__dirname, '..')
 const SOULS_DIR = path.join(ROOT, 'souls')
 const PSE_ROLES = new Set(['planner', 'specialist', 'evaluator'])
-const { matchTaskByMessage } = require('./taskMatch')
+const { matchTaskByMessage, isContinuation, ordinalOf, resolveChatTask } = require('./taskMatch')
 
 const cases = []
 function test(name, fn) { cases.push([name, fn]) }
@@ -156,6 +156,87 @@ test('publish-inventory exposes ONLY read-only tools (query cannot execute)', ()
     assert.match(body, /不是让你执行的授权/)
     assert.match(body, /严禁在最终答案里复述工具调用行/)
   }
+})
+
+// 2026-11-15 incident: after a numbered project list, the user replied "6" and
+// the run lost its task (no trigger keyword), so article-write's soul and tool
+// allow-list were dropped and the model re-ran article-discover instead of
+// writing the picked project. Studio has the same structural gap
+// (TasksService.resolve only inspects the latest message); the extra rule here
+// keeps the session's task for a pure pick, and nothing else.
+const REGISTRY = [
+  { id: 'general', triggers: '' },
+  { id: 'article-write', triggers: '文章,写作,技术文章,稿子' },
+  { id: 'code-review', triggers: '审查代码,代码审查' },
+]
+
+test('isContinuation accepts pure picks, not ordinary sentences', () => {
+  for (const m of ['6', ' 6 ', '第 6 个', '选6吧', '我写 6', '6号', '就它', '就这个吧', '3。']) {
+    assert.equal(isContinuation(m), true, `should be a continuation: ${JSON.stringify(m)}`)
+  }
+  for (const m of ['帮我写一篇技术文章', '6 篇文章都要', 'lume-qt', '2026', '这个怎么样', '']) {
+    assert.equal(isContinuation(m), false, `should NOT be a continuation: ${JSON.stringify(m)}`)
+  }
+  assert.equal(ordinalOf('第 6 个'), 6)
+  assert.equal(ordinalOf('6号'), 6)
+  assert.equal(ordinalOf('就它'), undefined)
+})
+
+test('forced taskId beats intent matching and continuation', () => {
+  const r = resolveChatTask({
+    taskId: 'code-review',
+    messages: [{ role: 'user', content: '帮我写一篇技术文章' }],
+    tasks: REGISTRY,
+    lastTaskId: 'article-write',
+  })
+  assert.equal(r.source, 'explicit')
+  assert.equal(r.task.id, 'code-review')
+})
+
+test('a bare ordinal keeps the session previous task', () => {
+  const r = resolveChatTask({
+    messages: [{ role: 'user', content: '6' }],
+    tasks: REGISTRY,
+    lastTaskId: 'article-write',
+  })
+  assert.equal(r.source, 'continuation')
+  assert.equal(r.task.id, 'article-write')
+})
+
+test('no previous task means no continuation guess', () => {
+  const r = resolveChatTask({ messages: [{ role: 'user', content: '6' }], tasks: REGISTRY })
+  assert.equal(r.source, 'none')
+  assert.equal(r.task, undefined)
+})
+
+test('ordinary prose still auto-matches and never inherits the session task', () => {
+  const auto = resolveChatTask({
+    messages: [{ role: 'user', content: '帮我审查代码' }],
+    tasks: REGISTRY,
+    lastTaskId: 'article-write',
+  })
+  assert.equal(auto.source, 'auto')
+  assert.equal(auto.task.id, 'code-review')
+
+  const none = resolveChatTask({
+    messages: [{ role: 'user', content: '这个怎么样，可以吗' }],
+    tasks: REGISTRY,
+    lastTaskId: 'article-write',
+  })
+  assert.equal(none.source, 'none')
+  assert.equal(none.task, undefined)
+})
+
+test('real souls: "6" alone matches nothing, but keeps the article-write session task', () => {
+  // The gap itself: no soul trigger fires on a bare ordinal.
+  assert.equal(matched('6'), null)
+  const r = resolveChatTask({
+    messages: [{ role: 'user', content: '6' }],
+    tasks: tasks(),
+    lastTaskId: 'article-write',
+  })
+  assert.equal(r.source, 'continuation')
+  assert.equal(r.task.id, 'article-write')
 })
 
 let failed = 0

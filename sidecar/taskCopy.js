@@ -144,4 +144,23 @@ function taskCopy(id) {
   return TASK_COPY[id]
 }
 
-module.exports = { TASK_COPY, SCOPES, taskCopy, renderSoulPrompt }
+/**
+ * Studio parity for the task system prompt: resolve-studio's
+ * `TasksService.agentOptions()` prefixes every pinned task with the task name,
+ * its one-line description and a hard "you may only use this task's tools"
+ * guardrail. resolve-lume used the raw soul body only, so a matched task read
+ * like advice a weak model could ignore; this makes the scope explicit (its
+ * allow-list is already enforced at execution time).
+ */
+function taskGuardrail(meta, body) {
+  const name = (meta && meta.name) || ''
+  const description = (meta && meta.description) || ''
+  const lines = [
+    name ? `当前任务：${name}` : '',
+    description ? `任务说明：${description}` : '',
+    '你只能使用本任务提供的工具。如果用户的请求超出了这些工具的能力，明确告知做不到并说明原因，不要臆造或强行复用其他工具。',
+  ].filter(Boolean)
+  return `${lines.join('\n')}\n\n${body}`
+}
+
+module.exports = { TASK_COPY, SCOPES, taskCopy, renderSoulPrompt, taskGuardrail }

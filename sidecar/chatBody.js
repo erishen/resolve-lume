@@ -2,6 +2,7 @@
 // Pure request-shape translation for /api/chat. Kept out of server.js so the
 // contract is unit-testable without starting the HTTP server (server.js has
 // top-level listen() + MCP refresh side effects).
+const { isContinuation, ordinalOf } = require('./taskMatch')
 
 // Injected into EVERY chat run (task soul or not). The .lume bridge exposes 24
 // tools spanning six unrelated business domains; without an explicit contract a
@@ -78,6 +79,19 @@ function buildAgentChatBody(body, task, toolCatalog) {
   }
   if (typeof toolCatalog === 'string' && toolCatalog.trim()) {
     parts.push(toolCatalog.trim())
+  }
+  // A bare ordinal turn carries no intent words of its own. State outright what
+  // it selects, otherwise a small model re-runs the lister that produced the
+  // numbering (2026-11-15: "6" -> article-discover again, no article).
+  if (task && lastUser && isContinuation(lastUser.content)) {
+    const n = ordinalOf(lastUser.content)
+    const pick = n == null ? '上一轮候选清单中的那一项' : `上一轮候选清单的第 ${n} 项`
+    parts.push(
+      '# 本轮是清单选择\n' +
+        `用户本轮只回复了「${String(lastUser.content).trim()}」，指向${pick}。\n` +
+        '请直接调用处理该选项的工具，并把编号原样传给对应参数（工具会解析成同一份清单的第 N 项）；' +
+        '不要重新调用生成清单的工具，不要再次列出候选，也不要把编号自行翻译成名称（编号与字母序枚举并非同一套顺序）。',
+    )
   }
   parts.push(TOOL_DISCIPLINE)
   agentBody.system = parts.join('\n\n---\n\n')
