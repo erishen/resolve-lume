@@ -141,34 +141,67 @@ function loadJsonKeys(file) {
   }
 }
 
-// Project enum = union of the pending queue (projects.json) and the generated
-// articles directory (WORDPRESS_TOOLS_DIR/articles/pse/zh). Read fresh on every
-// call — keys added after startup must be selectable, same as the TS original.
+// 合法项目 = 待写队列（projects.json）∪ 磁盘上仍有正文的项目。正文可能在待归档区
+// （articles/pse/{zh,en}），也可能已被归档搬进 articles/{zh,en}。每次调用现取。
+// 只扫待归档区会让已归档但 schema 枚举仍然公布的项目（resolve-lume、lume-qt）在
+// 运行时守卫这里被误判成 unknown project —— 模型按枚举选了合法名字却被拒，只能改猜
+// 别的项目，正是归档串台的根源。这里与 archive.py 的「有正文」口径保持一致。
 function loadArticleKeys() {
-  const keys = new Set()
   const creai = crewaiPseDir()
-  if (creai) {
-    const projectsFile = path.join(creai, 'tasks', 'project-articles', 'projects.json')
-    for (const k of loadJsonKeys(projectsFile)) keys.add(k)
-  }
+  const live = creai
+    ? loadJsonKeys(path.join(creai, 'tasks', 'project-articles', 'projects.json'))
+    : []
+  const keys = new Set(live)
   const wp = process.env.WORDPRESS_TOOLS_DIR
   if (wp) {
-    const dir = path.join(wp, 'articles', 'pse', 'zh')
-    try {
-      for (const name of fs.readdirSync(dir).sort()) {
-        const m = /^(.+?)-zh\.md$/.exec(name)
-        if (!m) continue
-        // 下划线 slug（resolve_tui）→ 连字符 project key（resolve-tui）
-        keys.add(m[1].replace(/_/g, '-'))
+    for (const lang of ['zh', 'en']) {
+      // 待归档区 + 已归档区都要扫；归档只是把正文从前者搬到后者。
+      for (const dir of [path.join(wp, 'articles', 'pse', lang), path.join(wp, 'articles', lang)]) {
+        try {
+          for (const name of fs.readdirSync(dir).sort()) {
+            const m = new RegExp(`^(.+?)-${lang}\\.md$`).exec(name)
+            if (!m) continue
+            // 下划线 slug（resolve_tui）→ 连字符 project key（resolve-tui）
+            keys.add(m[1].replace(/_/g, '-'))
+          }
+        } catch {
+          // 目录不存在/不可读：跳过该目录
+        }
       }
-    } catch {
-      // 目录不存在/不可读：仅用 json 队列
     }
   }
   // projects.json 的插入顺序在前，extra 文章按字母序追加在末尾。注意这份集合是活的：
-  // 归档会把文章移出 articles/pse/zh，后面的编号随即前移 —— 所以编号只用于展示，
-  // 写操作（archive / publish）必须传项目名，见 runCrewaiPublishTask 的数字分支。
-  return [...keys]
+  // 归档会把正文从 articles/pse/* 搬到 articles/*，但项目本身仍在集合里 —— 编号只用于
+  // 展示，写操作（archive / publish）只认项目名，见 runCrewaiPublishTask 的数字分支。
+  const extras = [...keys].filter((k) => !live.includes(k)).sort()
+  return [...live, ...extras]
+}
+
+// 「可归档」≠「合法项目名」（2026-11-22）：archive.py 只会把 articles/pse/{zh,en}
+// 里的正文搬到 articles/{zh,en}；正文已在归档区的项目会归档 0 篇，projects.json
+// 里还没写正文的项目同样无可归档。清单模式若直接展示 loadArticleKeys() 全集
+// （projects.json ∪ pse/ ∪ 已归档区），会列出几十个「可归档」项目、其中大多是
+// 空操作 —— 模型挑一个就会归档串台。故清单只列 pse/ 里还有正文的项目，顺序沿用
+// 全集（projects.json 在前），保证编号稳定。
+// 注意：按名字的合法性校验仍用 loadArticleKeys() 全集，已归档项目按名字调用
+// archive 会得到「0 篇」而非 unknown project（见上轮修复），不受此处收窄影响。
+function loadArchivableKeys() {
+  const pending = new Set()
+  const wp = process.env.WORDPRESS_TOOLS_DIR
+  if (wp) {
+    for (const lang of ['zh', 'en']) {
+      const dir = path.join(wp, 'articles', 'pse', lang)
+      try {
+        for (const name of fs.readdirSync(dir).sort()) {
+          const m = new RegExp(`^(.+?)-${lang}\\.md$`).exec(name)
+          if (m) pending.add(m[1].replace(/_/g, '-'))
+        }
+      } catch {
+        // 目录不存在/不可读：跳过该语言
+      }
+    }
+  }
+  return loadArticleKeys().filter((k) => pending.has(k))
 }
 
 // spawnCapture failure shape: `error: <tool> exited with code <c>\n<last-500>`.
@@ -212,12 +245,18 @@ async function runCrewaiPublishTask(name, def, args) {
 
   // 未指定 project → 返回清单，不循环追问。
   if (!project) {
-    if (projectKeys.length === 0) {
-      return 'error: no projects configured in crewai-pse projects.json.'
+    // 归档清单只列「还有正文在 pse/ 待归档区」的项目 —— archive.py 真正能搬动的。
+    // 别用 projectKeys 全集（含已归档区），否则列出几十个空操作项目、模型挑错串台。
+    const listKeys = name === 'article-archive' ? loadArchivableKeys() : projectKeys
+    if (listKeys.length === 0) {
+      return name === 'article-archive'
+        ? 'error: 当前没有待归档的文章（articles/pse/{zh,en} 为空）。'
+        : 'error: no projects configured in crewai-pse projects.json.'
     }
     return (
-      `(清单模式：未指定 project) 可用项目如下 —— 编号只供人阅读，${name} 不接受编号：\n` +
-      projectKeys.map((k, i) => `${i + 1}. ${k}`).join('\n') +
+      `(清单模式：未指定 project) ${name === 'article-archive' ? '待归档' : '可用'}项目如下` +
+      ` —— 编号只供人阅读，${name} 不接受编号：\n` +
+      listKeys.map((k, i) => `${i + 1}. ${k}`).join('\n') +
       `\n\n要预览并执行某篇，请再次调用本工具并带 \`project=<项目名>\`（如 project="resolve-studio"）；` +
       `用户回数字时，按上面这份清单把数字翻成项目名再传，不要把编号透传给工具。` +
       `本工具默认只预览不执行，确认执行需另带 confirm=true。`

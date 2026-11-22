@@ -96,6 +96,16 @@ test('arg-level rule: read-only article-publish is not gated, confirm=true is', 
   assert.equal(B.needsApproval('pse-review', { provider: 'deepseek' }), false, 'paid tier uses the intent gate')
 })
 
+test('arg-level rule: list/preview article-archive not gated, confirm=true is', () => {
+  // 2026-11-22: archive 曾 () => true 把只读清单也拦下，导致模型拿不到清单、
+  // 转去 validate 乱挑项目。现与 publish 对称：只有真正执行才需人工批准。
+  const B = require('./builtin-exec')
+  assert.equal(B.needsApproval('article-archive', {}), false, 'empty args = FIFO list, read-only')
+  assert.equal(B.needsApproval('article-archive', { project: 'resolve-lume' }), false, 'preview is read-only')
+  assert.equal(B.needsApproval('article-archive', { project: 'resolve-lume', confirm: false }), false, 'explicit confirm=false is read-only')
+  assert.equal(B.needsApproval('article-archive', { project: 'resolve-lume', confirm: true }), true, 'real archive asks')
+})
+
 test('read-only shell commands skip the prompt; anything that can write still asks', () => {
   const B = require('./builtin-exec')
   const readOnly = [

@@ -14,8 +14,9 @@ const fs = require('fs')
 const os = require('os')
 const path = require('path')
 
-// 复刻 trace 现场：projects.json 5 个 key，pse/zh 里有 4 篇（2 个重复 + legacy +
-// lume-a2a + resolve-lume），并集刚好 8 项，8 = resolve-lume。
+// 复刻 trace 现场：projects.json 5 个 key，pse/zh 里有 4 篇（solo_chat + legacy +
+// lume-a2a + resolve-lume）。清单只列 pse/ 里有正文的 4 项（2026-11-22 收窄），
+// 顺序沿用全集：solo-chat 在 projects.json 第一位，其余按字母序。
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rl-archive-numbering-'))
 const pse = path.join(root, 'crewai-pse')
 const wp = path.join(root, 'wp')
@@ -40,10 +41,13 @@ process.env.WORDPRESS_TOOLS_DIR = wp
 
 const publish = require('./business-publish')
 
-test('list mode still prints a readable numbered list, 8 = resolve-lume', async () => {
+test('list mode prints only archivable (pse/) projects with a readable number', async () => {
   const out = await publish['article-archive']({})
+  assert.match(out, /待归档项目如下/)
   assert.match(out, /1\. solo-chat/)
-  assert.match(out, /8\. resolve-lume/)
+  assert.match(out, /4\. resolve-lume/)
+  // 清单只列 pse/ 里还有正文的 4 项；projects.json 里没正文的 3 项不出现。
+  assert.doesNotMatch(out, /rag-platform|tax-agent-platform|alva-e2e/)
   // 编号只能给人看：清单文案不再教调用方把数字透传给工具。
   assert.doesNotMatch(out, /也可直接传列表中的编号/)
   assert.match(out, /project=<项目名>/)

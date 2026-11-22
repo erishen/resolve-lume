@@ -53,7 +53,12 @@ const APPROVAL_RULES = new Map([
   ['write-file', () => true],
   ['browser-open', () => true],
   ['browser-screenshot', () => true],
-  ['article-archive', () => true],
+  // archive 与 publish 对称（2026-11-22）：清单(project 缺省)与预览(confirm!==true)
+  // 都是只读的 —— runCrewaiPublishTask 内部的 confirm!==true 闸门保证不会真正
+  // make archive。只有 confirm=true 真正搬移文章+重建副本时才需要人工批准。
+  // 此前 () => true 把只读 preview 也拦下，120s 超时拒绝后模型拿不到清单，
+  // 转去 validate 乱挑项目（归档对象跑偏）。
+  ['article-archive', (a) => !!a && a.confirm === true],
   ['article-publish', (a) => !!a && a.confirm === true],
   // 真正「公开上线」的对外部副作用保留人工护栏；建草稿/本地构建类已放开
   // （按 2026-11-12 决策：juejin-draft / wechat-draft / build-juejin 改走
