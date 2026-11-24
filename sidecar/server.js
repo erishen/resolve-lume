@@ -1129,26 +1129,14 @@ async function handle(req, res) {
             '这不是「出现了一个小问题」，也不是需要用户做选择题的情况。',
         })
       }
-      // article-publish on the bridge (2026-11-06): omit-confirm calls are
-      // read-only (list queue / preview) and always allowed; confirm=true is a
-      // REAL WordPress publish and needs the same explicit user intent as
-      // article-write publish=true. Intent source is the newest live chat
-      // stream (latestChatUserMessage) — with a stale second stream the old
-      // sole-stream lookup returned '' and rejected an explicit 发布.
-      // With no chat stream at all it still fails closed.
+      // 2026-11-22 用户决定：article-publish 零确认 —— 带 project 即直接发布，
+      // 不再检查「当前消息是否明确说发布」、不再要求 confirm=true。发布前的质量
+      // 校验（validate.py）仍在 business-publish.js 里，坏文章照样拦截。
+      // publishIntentMsg 仍保留：pse-review 付费门与 approval gate 需要它。
+      // 注：progress.js:chatStreamForSession 已改为取最新流，避免同会话多轮
+      // 命中旧消息（该修复对付费门/审批路由依然是正向的）。
       const publishIntentMsg = progress.chatUserMessageForSession(callSession)
       console.log(`[publish-gate] tool=${toolName} confirm=${toolArgs && toolArgs.confirm} session=${callSession || '-'} streams=${progress.activeChatStreamCount()} msg=${JSON.stringify(String(publishIntentMsg).slice(0, 60))}`)
-      if (toolName === 'article-publish' && toolArgs && toolArgs.confirm === true &&
-          !hasExplicitPublishIntent(publishIntentMsg)) {
-        return send(res, 200, {
-          name: toolName,
-          result:
-            'tool error: confirm=true 会真正发布到 WordPress（外部副作用），' +
-            '用户当前消息并未明确说「发布 / 上线 / publish」，已拒绝执行。' +
-            '先用不带 confirm 的调用做预览并向用户转达，等用户明确同意发布后，' +
-            '再带 confirm=true 只针对那一篇 project 调用。',
-        })
-      }
       // pse-review on the bridge (2026-11-09): the default tier is free
       // (provider=free / llm-router). provider="deepseek" costs money, so the
       // model must not select it on its own — only an explicit user ask in the

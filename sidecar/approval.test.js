@@ -88,12 +88,17 @@ test('approval is remembered per run: same tool does not prompt twice', async ()
   progress.unregisterChatStream(id2)
 })
 
-test('arg-level rule: read-only article-publish is not gated, confirm=true is', () => {
+test('article-publish is never approval-gated (2026-11-22: zero-confirm publish)', () => {
   const B = require('./builtin-exec')
-  assert.equal(B.needsApproval('article-publish', { project: 'x' }), false)
-  assert.equal(B.needsApproval('article-publish', { project: 'x', confirm: true }), true)
+  // 用户决定发布零确认：带 project 即发，审批门整条移除。
+  assert.equal(B.needsApproval('article-publish', {}), false, 'list is read-only')
+  assert.equal(B.needsApproval('article-publish', { project: 'x' }), false, 'publish needs no approval')
+  assert.equal(B.needsApproval('article-publish', { project: 'x', confirm: true }), false, 'confirm is ignored')
+  assert.ok(!B.APPROVAL_GATED_NAMES.has('article-publish'), 'not flagged as gated in the panel')
   assert.equal(B.needsApproval('read-file', { path: 'x' }), false)
   assert.equal(B.needsApproval('pse-review', { provider: 'deepseek' }), false, 'paid tier uses the intent gate')
+  // archive 仍需审批（执行时），别被 publish 的改动带偏。
+  assert.equal(B.needsApproval('article-archive', { project: 'x', confirm: true }), true)
 })
 
 test('arg-level rule: list/preview article-archive not gated, confirm=true is', () => {

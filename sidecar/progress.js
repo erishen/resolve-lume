@@ -168,12 +168,25 @@ function activeChatStreamIds() {
   return [...streams.keys()]
 }
 
-/** Stream that belongs to this conversation id (null when none is live). */
+/**
+ * NEWEST live stream that belongs to this conversation id (null when none).
+ * A single conversation can leave several streams alive across rounds: the
+ * browser reuses its sessionId, each /api/chat registers a fresh stream, and
+ * the old one may not reach `res.close` before the next round starts (the
+ * bridge calls are blocking POSTs while the SSE stays open). Returning the
+ * FIRST match pinned the gate to the oldest round's message — 2026-11-22:
+ * user replied 「确认发布」 but the publish-intent gate kept reading the
+ * earlier 「6」 (project pick) and refused every confirm=true, looping.
+ * The newest stream carries the current turn's userMessage, which is what
+ * intent checks (and approval prompts) must see. streams is insertion-ordered
+ * with monotonically increasing ids, so scan for the highest id.
+ */
 function chatStreamForSession(sessionId) {
   const sid = String(sessionId || '')
   if (!sid) return null
-  for (const s of streams.values()) if (s.sessionId === sid) return s
-  return null
+  let best = null
+  for (const s of streams.values()) if (s.sessionId === sid && (!best || s.id > best.id)) best = s
+  return best
 }
 
 function approvalRequestFrame(call) {

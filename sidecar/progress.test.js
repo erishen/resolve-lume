@@ -122,6 +122,37 @@ test('latestChatUserMessage returns the newest stream message even with concurre
   assert.equal(P.latestChatUserMessage(), '')
 })
 
+// 2026-11-22 regression: one conversation reuses its sessionId across rounds,
+// so several streams for that session stay live at once (old SSE not closed
+// yet). The publish-intent gate reads chatUserMessageForSession(session) — it
+// MUST see the NEWEST round's message. Returning the first match pinned it to
+// the earlier 「6」 (project pick) and refused 「确认发布」, looping forever.
+test('chatUserMessageForSession sees newest round when one session has multiple live streams', () => {
+  const a = fakeRes()
+  const idA = P.registerChatStream(a, { userMessage: '6', sessionId: 'sess-loop' })
+  try {
+    assert.equal(P.chatUserMessageForSession('sess-loop'), '6')
+    const b = fakeRes()
+    const idB = P.registerChatStream(b, { userMessage: '确认发布', sessionId: 'sess-loop' })
+    try {
+      // Oldest stream still live; newest must win for intent lookup.
+      assert.equal(P.chatUserMessageForSession('sess-loop'), '确认发布')
+      const newest = P.chatStreamForSession('sess-loop')
+      assert.equal(newest && newest.id, idB, 'chatStreamForSession returns newest matching stream')
+      // And the intent predicate now sees the explicit consent.
+      const { hasExplicitPublishIntent } = require('./chatBody')
+      assert.equal(hasExplicitPublishIntent(P.chatUserMessageForSession('sess-loop')), true)
+    } finally {
+      P.unregisterChatStream(idB)
+    }
+    // Falling back to the sole surviving stream restores the old message.
+    assert.equal(P.chatUserMessageForSession('sess-loop'), '6')
+  } finally {
+    P.unregisterChatStream(idA)
+  }
+  assert.equal(P.chatUserMessageForSession('sess-loop'), '')
+})
+
 test('a closed/destroyed response never receives progress', () => {
   const r = fakeRes()
   r.writableEnded = true

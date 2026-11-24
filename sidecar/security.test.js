@@ -90,8 +90,8 @@ test('agent tool allowlist is generated and high-risk tools are approval-gated',
   }
   // 2026-11-09: the allowlist no longer hides risky tools (resolve-studio parity:
   // every tool is visible, a human must approve each gated call). What must hold
-  // instead is that the risky ones are behind sidecar/approval.js, and that the
-  // publish gate still refuses confirm=true without explicit user intent.
+  // instead is that the risky ones are behind sidecar/approval.js.
+  // 2026-11-22: article-publish 是用户明确指定的零确认例外，不在此 gated 清单里。
   for (const n of ['shell', 'write-file', 'make', 'hot-news-publish', 'juejin-publish']) {
     if (B.BUILTIN_NAMES.has(n)) {
       assert.ok(B.AGENT_TOOL_ALLOW.has(n), `${n} should be visible to the agent`)

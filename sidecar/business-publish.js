@@ -124,7 +124,10 @@ const CREWAI_TASKS = {
   'article-validate': { label: '校验文章', target: 'validate', preValidate: false },
   // 写操作标记 mutates：归档会把文章移出 articles/pse/zh、发布会把文章标记成已发布，
   // 候选集合本身会变，位置编号随之失效 —— 这两类只认项目名（见下方数字分支）。
-  'article-publish': { label: '发布文章', target: 'publish', preValidate: true, mutates: true },
+  // direct:true（2026-11-22 用户决定）：发布不再需要二次确认 —— 带 project
+  // 即直接执行，忽略 confirm 参数。前置校验 preValidate 仍是质量闸门（拦截
+  // frontmatter/文件缺失的坏文章），不是「让用户确认」的交互门，故保留。
+  'article-publish': { label: '发布文章', target: 'publish', preValidate: true, mutates: true, direct: true },
   'article-archive': { label: '归档文章', target: 'archive', preValidate: false, mutates: true },
 }
 
@@ -204,6 +207,21 @@ function loadArchivableKeys() {
   return loadArticleKeys().filter((k) => pending.has(k))
 }
 
+// 「待发布」≠「合法项目名」（2026-11-22）：publish.py 的项目来源是
+// projects.json（待写队列）∪ projects-published.json（已发存档，可重跑更新链接），
+// 但真正「还没发、这次该发」的只有 projects.json 里有正文的待写项目。
+// loadArticleKeys() 把已归档区 articles/{zh,en} 有正文的 51 个已发布项目也扫进来
+// （经 projects-published.json），清单若直接用它会列出 48 个「待发布」项目、绝大多数
+// 早已发过，模型挑错就发错文章。故清单只读 projects.json 的待写队列（与文章流水线
+// 的待发布口径一致）；按名字的合法性校验仍用 loadArticleKeys() 全集 —— 已发布项目
+// 按名字重跑（更新链接）仍是合法操作，不受此处收窄影响。
+function loadPendingPublishKeys() {
+  const creai = crewaiPseDir()
+  return creai
+    ? loadJsonKeys(path.join(creai, 'tasks', 'project-articles', 'projects.json'))
+    : []
+}
+
 // spawnCapture failure shape: `error: <tool> exited with code <c>\n<last-500>`.
 // Pull the exit code and the pure output tail out of that envelope.
 function exitOf(errStr) {
@@ -245,21 +263,46 @@ async function runCrewaiPublishTask(name, def, args) {
 
   // 未指定 project → 返回清单，不循环追问。
   if (!project) {
-    // 归档清单只列「还有正文在 pse/ 待归档区」的项目 —— archive.py 真正能搬动的。
-    // 别用 projectKeys 全集（含已归档区），否则列出几十个空操作项目、模型挑错串台。
-    const listKeys = name === 'article-archive' ? loadArchivableKeys() : projectKeys
+    // 清单按工具语义收窄，别用 projectKeys 全集（含 51 个已发布项目）：
+    //   article-publish    —— 只列 projects.json 待写队列里真正还没发的项目
+    //   article-archive    —— 只列 pse/ 里还有正文、archive.py 真正能搬动的项目
+    //   article-validate   —— 同 archive：validate.py 只读 pse/，已归档项目必失败
+    // 全集只用于按名字的合法性校验（已发布项目重跑更新链接仍合法），不用于清单展示。
+    const listKeys =
+      name === 'article-publish'
+        ? loadPendingPublishKeys()
+        : name === 'article-archive' || name === 'article-validate'
+        ? loadArchivableKeys()   // validate.py 只读 articles/pse/{zh,en}，已归档项目校验必然缺文件
+        : projectKeys
+    const label =
+      name === 'article-archive'
+        ? '待归档'
+        : name === 'article-publish'
+        ? '待发布'
+        : name === 'article-validate'
+        ? '待校验'
+        : '可用'
     if (listKeys.length === 0) {
       return name === 'article-archive'
         ? 'error: 当前没有待归档的文章（articles/pse/{zh,en} 为空）。'
+        : name === 'article-validate'
+        ? 'error: 当前没有待校验的文章（articles/pse/{zh,en} 为空）。'
+        : name === 'article-publish'
+        ? 'error: 当前没有待发布的项目（projects.json 待写队列为空）。'
         : 'error: no projects configured in crewai-pse projects.json.'
     }
+    const sample = listKeys[0]
+    const howTo = def.direct
+      ? `\n\n要发布某篇，请再次调用本工具并带 \`project=<项目名>\`（如 project="${sample}"）—— 带 project 即直接发布，无需二次确认；` +
+        `用户回数字时，按上面这份清单把数字翻成项目名再传，不要把编号透传给工具。`
+      : `\n\n要预览并执行某篇，请再次调用本工具并带 \`project=<项目名>\`（如 project="${sample}"）；` +
+        `用户回数字时，按上面这份清单把数字翻成项目名再传，不要把编号透传给工具。` +
+        `本工具默认只预览不执行，确认执行需另带 confirm=true。`
     return (
-      `(清单模式：未指定 project) ${name === 'article-archive' ? '待归档' : '可用'}项目如下` +
+      `(清单模式：未指定 project) ${label}项目如下` +
       ` —— 编号只供人阅读，${name} 不接受编号：\n` +
       listKeys.map((k, i) => `${i + 1}. ${k}`).join('\n') +
-      `\n\n要预览并执行某篇，请再次调用本工具并带 \`project=<项目名>\`（如 project="resolve-studio"）；` +
-      `用户回数字时，按上面这份清单把数字翻成项目名再传，不要把编号透传给工具。` +
-      `本工具默认只预览不执行，确认执行需另带 confirm=true。`
+      howTo
     )
   }
 
@@ -286,7 +329,8 @@ async function runCrewaiPublishTask(name, def, args) {
     })
 
   // 预览安全闸门：confirm !== true 时绝不真正执行。
-  if (confirm !== true) {
+  // direct 工具（article-publish）例外：用户决定发布零确认，带 project 即发。
+  if (confirm !== true && !def.direct) {
     let validated = false
     if (def.preValidate) {
       const res = await runValidate()

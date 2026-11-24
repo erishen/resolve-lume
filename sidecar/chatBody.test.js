@@ -79,7 +79,11 @@ test('discipline separates a read-only pending-list query from publish actions',
 test('discipline forbids fake "small problem" scripts and unprompted publish', () => {
   assert.match(TOOL_DISCIPLINE, /严禁编造/)
   assert.match(TOOL_DISCIPLINE, /DeprecationWarning/)
-  assert.match(TOOL_DISCIPLINE, /不得自行决定发布/)
+  // article-write 的 publish=true 仍需明确意图（用户只回编号/项目名时省略该参数）。
+  assert.match(TOOL_DISCIPLINE, /用户只回编号或项目名时一律省略/)
+  // 2026-11-22: article-publish 改为零确认 —— 话术必须明确「不要再要求二次确认」。
+  assert.match(TOOL_DISCIPLINE, /article-publish 是零确认的/)
+  assert.match(TOOL_DISCIPLINE, /不要再回复「请确认发布」/)
 })
 
 test('discipline states the zero-arg queue-tool contract', () => {

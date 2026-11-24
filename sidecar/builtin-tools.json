@@ -687,7 +687,7 @@
     },
     {
       "name": "article-publish",
-      "description": "发布已生成的文章到 WordPress。发布前自动运行 article-validate 校验，有错误则阻止发布并提示修复。调用 crewai-pse 的 `make publish P=<project>`，把待发布队列中的文章发布到线上并写回 wp_id/link。需要 .env 中的 WordPress 凭据。⚠️ 这是【发布】工具：调用时不传 project 会列出当前待发布队列中的所有文章供用户选择，用户选定后再带 project 调用即可发布；不要改用 article-discover（那是用于发现【新】项目以撰写文章，不负责发布）。 The project MUST be one from the `project` enum (read it from the tool schema — do NOT call this tool to discover choices). If the user did not specify a project, ASK the user to pick one of the enum values, then call with `project` set. Never guess or invent a project name. This parameter is REQUIRED.🛑 安全闸门：本工具默认【只预览、不真正发布】。只有 `confirm` 参数显式设为 true 时才会 POST 到 WordPress。且一次只能发布用户【明确点名】的那一篇 project——绝对禁止对队列里的多篇文章循环调用本工具、或在一次回复里批量发布。未等用户明确指定 project 前，不要设 confirm=true。若用户只泛泛地说「发布一篇文章」却没给出具体 project，你必须先停下来问清楚要发布哪一篇，绝不可自行从清单里挑一个并设 confirm=true。",
+      "description": "发布已生成的文章到 WordPress。发布前自动运行 article-validate 校验，有错误则阻止发布并提示修复。调用 crewai-pse 的 `make publish P=<project>`，把待发布队列中的文章发布到线上并写回 wp_id/link。需要 .env 中的 WordPress 凭据。⚠️ 这是【发布】工具：调用时不传 project 会列出当前待发布队列中的所有文章供用户选择，用户选定后再带 project 调用即可发布；不要改用 article-discover（那是用于发现【新】项目以撰写文章，不负责发布）。 The project MUST be one from the `project` enum (read it from the tool schema — do NOT call this tool to discover choices). If the user did not specify a project, ASK the user to pick one of the enum values, then call with `project` set. Never guess or invent a project name. This parameter is REQUIRED.✅ 带 `project` 即直接发布（2026-11-22 起无需二次确认、无需 confirm 参数）：只要用户明确点名了某一篇，直接带 project 调用本工具即 POST 到 WordPress；不要再回复「请确认发布」、不要再要求用户确认。一次只发布用户明确点名的那一篇 project，绝对禁止循环发布或对多篇文章批量调用。若用户只泛泛说「发布一篇文章」却没给出具体 project，必须先问清楚要发布哪一篇，绝不可自行从清单里挑一个。发布前会自动跑 article-validate，坏文章会被拦截并提示修复。",
       "parameters": {
         "type": "object",
         "properties": {
@@ -709,7 +709,7 @@
           },
           "confirm": {
             "type": "boolean",
-            "description": "安全闸门。必须显式设为 true 才会真正 POST 到 WordPress；缺省或 false 只做只读预览（跑校验、打印将执行的操作，但不发布）。仅在用户已明确点名这篇 project 后才可设 true；禁止对同一队列批量设 true。",
+            "description": "已废弃（2026-11-22）：article-publish 现在带 project 即直接发布，无需二次确认。此参数被忽略——传 true 或省略效果相同。保留仅为兼容旧调用，无需再设置。",
             "default": false
           }
         },
